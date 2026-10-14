@@ -7,6 +7,7 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v18 2026-10-14: Current match heading reads Today's Match / Next Match / Last Match; full date on the card; Log scratch stays beside each match on phones.
   v17 2026-10-14: League admins can rename seasons.
   v16 2026-10-14: Multiple leagues, each with seasons (one current) and teams that carry over between seasons; rosters per team per season;
                   sign-in is League → Team → PIN; Owner / League admin / Team admin roles; rules per league.
@@ -111,7 +112,13 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .mcard:hover{border-color:var(--cloth)}
 .mrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}
 .scr-btn{border-radius:var(--r)}
-@media (max-width:480px){.mrow{grid-template-columns:1fr}.scr-btn{justify-self:end;padding:6px 12px}}
+@media (max-width:480px){
+  .mrow{gap:6px}
+  .mcard{grid-template-columns:auto minmax(0,1fr);gap:4px 12px;padding:10px 12px}
+  .mcard .mdate{grid-row:span 2}
+  .mcard .pill{grid-column:2;justify-self:start}
+  .scr-btn{width:74px;padding:6px 8px;font-size:13px;line-height:1.2;white-space:normal;text-align:center}
+}
 .mdate{font:500 12px/1.2 var(--f-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em;min-width:54px;text-align:center}
 .mdate b{display:block;font:700 22px/1 var(--f-display);color:var(--ink)}
 .mtitle{font-weight:600;min-width:0;overflow-wrap:anywhere}
@@ -638,13 +645,17 @@ function viewNoSeason() {
 function currentMatches(list) {
   const today = todayISO(), byCreated = (a, b) => (a.created || 0) - (b.created || 0);
   const on = d => list.filter(m => m.date === d).sort(byCreated);
-  if (on(today).length) return { label: "Tonight", ms: on(today) };
+  const many = n => n > 1 ? "es" : "";
+  if (on(today).length) return { title: `Today's Match${many(on(today).length)}`, ms: on(today) };
   const next = list.filter(m => m.date > today).map(m => m.date).sort()[0];
-  if (next) return { label: "Up next", ms: on(next) };
+  if (next) return { title: `Next Match${many(on(next).length)}`, ms: on(next) };
+  const last = list.filter(m => m.date && m.date < today).map(m => m.date).sort().pop();
+  if (last) return { title: `Last Match${many(on(last).length)}`, ms: on(last) };
   return null;
 }
 function currentCard(m) {
-  const sc = score(m), no = matchNo(m), [, , rest] = fmtDay(m.date), n = (m.roster || []).length;
+  const sc = score(m), no = matchNo(m), n = (m.roster || []).length;
+  const d = new Date((m.date || "") + "T12:00"), full = isNaN(d) ? "Date not set" : d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
   const games = m.games.map((g, i) => {
     const who = g.p.filter(Boolean).map(id => esc(pName(m.seasonId, id, m))).join(" &amp; ");
     const opp = (g.opp || []).filter(Boolean).map(esc).join(" &amp; ");
@@ -655,7 +666,7 @@ function currentCard(m) {
   }).join("");
   return `<div class="cur">
     <div class="cur-head">
-      <div style="min-width:0"><div class="eyebrow">${esc(rest)}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
+      <div style="min-width:0"><div class="eyebrow">${esc(full)}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
         <h2>vs ${esc(m.opponent || "Opponent TBD")}</h2>
         <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
       <div class="score"><b>${m.forfeit ? "FF" : sc.w + "–" + sc.l}</b>${sc.res ? `<span class="res ${sc.res}">${resLabel(sc.res)}</span>` : ""}</div>
@@ -680,8 +691,8 @@ function viewMatches(sid) {
   }).join("");
   return `
   <section style="display:grid;gap:12px">
-    <div class="row spread"><h2>Current match</h2>${cur ? `<span class="tag">${cur.label}</span>` : ""}</div>
-    ${cur ? cur.ms.map(currentCard).join("") : `<div class="panel empty"><p>No match today and none scheduled. Add the next match with its date to see it here.</p><button class="btn primary w" data-act="new-match">New match</button></div>`}
+    <div class="row spread"><h2>${cur ? cur.title : "Next Match"}</h2></div>
+    ${cur ? cur.ms.map(currentCard).join("") : `<div class="panel empty"><p>No matches yet this season. Add one with its date and it shows up here.</p><button class="btn primary w" data-act="new-match">New match</button></div>`}
   </section>
   <div class="row spread"><h2>Matches</h2><button class="btn primary w" data-act="new-match">New match</button></div>
   ${list.length ? `<div class="mlist">${cards}</div>` : `<div class="panel empty"><p>No matches yet this season. Add one to pick who's playing and draw the pairings.</p></div>`}`;
