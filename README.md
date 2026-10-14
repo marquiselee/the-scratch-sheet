@@ -40,4 +40,4 @@ Admins can tap **Forgot password?** on the sign-in screen to get a reset link by
 
 The app is a single `index.html` served by GitHub Pages. The Supabase URL and publishable key in it are public by design; access is controlled by the database rules.
 
-A GitHub Action (`.github/workflows/keepalive.yml`) pings Supabase twice a week so the free project doesn't pause.
+A GitHub Action (`.github/workflows/keepalive.yml`) pings Supabase twice a week so the free project doesn't pause, and commits a small dated file (`.github/keepalive.txt`) whenever the repo has gone 30 days without a commit, so GitHub never turns the schedule off.

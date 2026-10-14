@@ -1,10 +1,14 @@
-# Free Supabase projects pause after a week without activity.
-# This pings the database twice a week so the app is always ready on league night.
+# Free Supabase projects pause after a week without activity, and GitHub turns off
+# scheduled jobs in repos with no commits for 60 days. This job handles both:
+# it pings the database twice a week, and every few weeks it commits a tiny dated
+# file so GitHub keeps the schedule running through the off-season.
 name: Keep Supabase awake
 on:
   schedule:
     - cron: "17 14 * * 1,4"   # Mondays and Thursdays, 14:17 UTC
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   ping:
     runs-on: ubuntu-latest
@@ -14,3 +18,18 @@ jobs:
           curl -fsS -X POST "https://httcvbpsrlhrfgxmeqbt.supabase.co/rest/v1/rpc/league_has_admin" \
             -H "apikey: sb_publishable_0Bg3NuYq58agSddJxfc71w_ZRJEAeoj" \
             -H "Content-Type: application/json" -d '{}'
+      - uses: actions/checkout@v4
+      - name: Keep the schedule alive (commit every ~30 days)
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          if [ $(( (now - last) / 86400 )) -ge 30 ]; then
+            date -u +"%Y-%m-%dT%H:%MZ" > .github/keepalive.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/keepalive.txt
+            git commit -m "Keepalive: $(date -u +%Y-%m-%d)"
+            git push
+          else
+            echo "Last commit was $(( (now - last) / 86400 )) days ago; no keepalive commit needed."
+          fi
