@@ -7,6 +7,8 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v16 2026-10-14: Multiple leagues, each with seasons (one current) and teams that carry over between seasons; rosters per team per season;
+                  sign-in is League → Team → PIN; Owner / League admin / Team admin roles; rules per league.
   v15 2026-10-14: Admins sign in with real email addresses; "Forgot password?" sends a reset link by email; set-new-password screen.
   v14 2026-10-14: Moved to GitHub Pages + Supabase. League with many teams; team members sign in per session with team + 4-digit PIN;
                   league and team admins sign in with username + password; League tab for teams, PINs and admins; all permissions enforced by the database.
@@ -268,14 +270,17 @@ const GAMES = 5;
 const S = {
   team: { name: "", activeSeasonId: "" },
   seasons: {}, matches: {},
-  phase: "boot", role: null, username: "", uid: null, teamId: null, teams: null, hasLeague: true, leagueAdmins: null,
-  gate: { tab: "team", teamId: "", msg: "", ok: false, busy: false },
+  phase: "boot", role: null, username: "", uid: null, adminLeague: null, teamId: null, leagueId: null, league: null, leagueSeasons: [],
+  leagues: null, teams: [], hasLeague: true, leagueAdmins: null, adminTeams: [], adminLeagues: [],
+  mgr: { leagueId: null, data: null, seasonId: null },
+  gate: { tab: "team", leagueId: "", teamId: "", msg: "", ok: false, busy: false },
   canWrite: true, loaded: { team:false, seasons:false, matches:false, rules:false },
   rules: { text: "", fileName: "", updated: 0 },
   view: { tab: "matches", matchId: null, seasonId: null },
   ui: { armed: null, modal: null, openSeason: null, unlock: null, draft: null, pinFor: null, pwFor: null },
 };
-const isAdmin = () => S.role === "league" || S.role === "team";
+const isAdmin = () => S.role === "owner" || S.role === "league" || S.role === "team";
+const isLeagueRole = () => S.role === "owner" || S.role === "league";
 
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -407,6 +412,7 @@ function persist(coll, id) {
   const key = coll + "/" + id, w = writers[key] ||= { timer: null, inflight: false, dirty: false };
   clearTimeout(w.timer); w.timer = setTimeout(() => { w.timer = null; flush(coll, id); }, 450);
 }
+const rosterData = s => { const { name, created, inSeason, ...rest } = s || {}; return rest; };
 async function flush(coll, id) {
   const key = coll + "/" + id, w = writers[key];
   if (w.inflight) { w.dirty = true; return; }
@@ -415,9 +421,11 @@ async function flush(coll, id) {
   try {
     if (coll === "config" && id === "team") {
       const name = (S.team.name || "").trim();
-      r = name ? await sb.from("teams").update({ name, active_season_id: S.team.activeSeasonId || null }).eq("id", S.teamId) : { error: null };
+      r = name ? await sb.from("teams").update({ name }).eq("id", S.teamId) : { error: null };
     } else if (coll === "config" && id === "rules") {
-      r = await sb.from("league").update({ rules_text: S.rules.text, rules_file: S.rules.fileName || "", rules_updated: S.rules.updated ? new Date(S.rules.updated).toISOString() : null }).eq("id", 1);
+      r = await sb.from("leagues").update({ rules_text: S.rules.text, rules_file: S.rules.fileName || "", rules_updated: S.rules.updated ? new Date(S.rules.updated).toISOString() : null }).eq("id", S.leagueId);
+    } else if (coll === "seasons") {
+      r = await sb.from("rosters").upsert({ team_id: S.teamId, season_id: id, data: clone(rosterData(S.seasons[id])) });
     } else {
       const data = S[coll][id];
       r = data === undefined ? await sb.from(coll).delete().eq("id", id) : await sb.from(coll).upsert({ id, team_id: S.teamId, data: clone(data) });
@@ -432,84 +440,125 @@ async function flush(coll, id) {
       if (!still) return signOut(S.role === "member" ? "Your team session ended. Enter the PIN again to keep going." : "Your session ended. Sign in again.");
     }
     toast(m);
-    if (coll === "matches" || coll === "seasons") await refetch(coll, id);
+    if (coll === "matches") await refetchMatch(id);
   }
   if (w.dirty) { w.dirty = false; flush(coll, id); }
 }
 const busy = key => { const w = writers[key]; return w && (w.timer || w.inflight); };
-async function refetch(coll, id) {
-  const { data } = await sb.from(coll).select("id,data").eq("id", id).maybeSingle();
-  if (data) S[coll][id] = data.data; else delete S[coll][id];
+async function refetchMatch(id) {
+  const { data } = await sb.from("matches").select("id,data").eq("id", id).maybeSingle();
+  if (data) S.matches[id] = data.data; else delete S.matches[id];
   render();
 }
 
 /* ---------- loading a team ---------- */
 const rulesFrom = r => ({ text: r?.rules_text || "", fileName: r?.rules_file || "", updated: r?.rules_updated ? Date.parse(r.rules_updated) : 0 });
+const canLeague = lid => S.role === "owner" || (S.role === "league" && S.adminLeague === lid);
+async function loadSeasons() {
+  // seasons this team plays in (or has a roster/matches for), merged with its rosters
+  const [ls, st, ro] = await Promise.all([
+    sb.from("league_seasons").select("id,name,created_at").eq("league_id", S.leagueId),
+    sb.from("season_teams").select("season_id").eq("team_id", S.teamId),
+    sb.from("rosters").select("season_id,data").eq("team_id", S.teamId),
+  ]);
+  const inSeason = new Set((st.data || []).map(x => x.season_id)), rosters = {};
+  (ro.data || []).forEach(x => rosters[x.season_id] = x.data);
+  const used = new Set(Object.values(S.matches).map(m => m.seasonId));
+  S.leagueSeasons = ls.data || [];
+  const next = {};
+  for (const s of S.leagueSeasons) {
+    if (!inSeason.has(s.id) && !rosters[s.id] && !used.has(s.id)) continue;
+    next[s.id] = busy("seasons/" + s.id) && S.seasons[s.id] ? S.seasons[s.id] : { players: [], ...(rosters[s.id] || {}), name: s.name, created: Date.parse(s.created_at) || 0, inSeason: inSeason.has(s.id) };
+  }
+  S.seasons = next;
+}
 async function loadTeam(teamId) {
   if (chan) { sb.removeChannel(chan); chan = null; }
   S.teamId = teamId; S.seasons = {}; S.matches = {}; S.view.matchId = null;
   S.loaded = { team: false, seasons: false, matches: false, rules: false }; render();
-  const [t, se, ma, le] = await Promise.all([
-    sb.from("teams").select("id,name,active_season_id").eq("id", teamId).maybeSingle(),
-    sb.from("seasons").select("id,data").eq("team_id", teamId),
-    sb.from("matches").select("id,data").eq("team_id", teamId),
-    sb.from("league").select("rules_text,rules_file,rules_updated").eq("id", 1).maybeSingle(),
-  ]);
-  const err = t.error || se.error || ma.error || le.error;
-  if (err) { toast(errMsg(err)); }
+  const t = await sb.from("teams").select("id,name,league_id").eq("id", teamId).maybeSingle();
   if (!t.data) return signOut(S.role === "member" ? "Your team session ended. Enter the PIN again." : "That team isn't available.");
-  S.team = { name: t.data.name, activeSeasonId: t.data.active_season_id || "" };
-  (se.data || []).forEach(r => S.seasons[r.id] = r.data);
+  S.leagueId = t.data.league_id;
+  const [lg, ma] = await Promise.all([
+    sb.from("leagues").select("id,name,current_season_id,rules_text,rules_file,rules_updated").eq("id", S.leagueId).maybeSingle(),
+    sb.from("matches").select("id,data").eq("team_id", teamId),
+  ]);
   (ma.data || []).forEach(r => S.matches[r.id] = r.data);
-  S.rules = rulesFrom(le.data);
+  S.league = lg.data || { name: "", current_season_id: null };
+  S.team = { name: t.data.name, activeSeasonId: S.league.current_season_id || "" };
+  S.rules = rulesFrom(lg.data);
+  await loadSeasons();
   try { S.view.seasonId = localStorage.getItem("ss-season-" + teamId) || null; } catch (e) {}
   S.loaded = { team: true, seasons: true, matches: true, rules: true };
-  const row = coll => p => {
-    const id = p.new?.id || p.old?.id; if (!id || busy(coll + "/" + id)) return;
-    if (p.eventType === "DELETE") delete S[coll][id]; else if (p.new.team_id === S.teamId) S[coll][id] = p.new.data;
-    render();
-  };
+  const reSeasons = () => loadSeasons().then(render);
   chan = sb.channel("team-" + teamId)
-    .on("postgres_changes", { event: "*", schema: "public", table: "matches", filter: `team_id=eq.${teamId}` }, row("matches"))
-    .on("postgres_changes", { event: "*", schema: "public", table: "seasons", filter: `team_id=eq.${teamId}` }, row("seasons"))
-    .on("postgres_changes", { event: "DELETE", schema: "public", table: "matches" }, row("matches"))
-    .on("postgres_changes", { event: "DELETE", schema: "public", table: "seasons" }, row("seasons"))
-    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "teams", filter: `id=eq.${teamId}` }, p => { if (!busy("config/team")) { S.team = { name: p.new.name, activeSeasonId: p.new.active_season_id || "" }; render(); } })
-    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "league" }, p => { if (!busy("config/rules")) { S.rules = rulesFrom(p.new); render(); } })
+    .on("postgres_changes", { event: "*", schema: "public", table: "matches", filter: `team_id=eq.${teamId}` }, p => {
+      const id = p.new?.id || p.old?.id; if (!id || busy("matches/" + id)) return;
+      if (p.eventType === "DELETE") delete S.matches[id]; else S.matches[id] = p.new.data;
+      render();
+    })
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "matches" }, p => { const id = p.old?.id; if (id && S.matches[id] && !busy("matches/" + id)) { delete S.matches[id]; render(); } })
+    .on("postgres_changes", { event: "*", schema: "public", table: "rosters", filter: `team_id=eq.${teamId}` }, p => {
+      const sid = p.new?.season_id; if (!sid || busy("seasons/" + sid) || !S.seasons[sid]) return reSeasons();
+      S.seasons[sid] = { ...S.seasons[sid], players: [], ...p.new.data, name: S.seasons[sid].name, created: S.seasons[sid].created, inSeason: S.seasons[sid].inSeason }; render();
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "season_teams" }, reSeasons)
+    .on("postgres_changes", { event: "*", schema: "public", table: "league_seasons", filter: `league_id=eq.${S.leagueId}` }, reSeasons)
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "teams", filter: `id=eq.${teamId}` }, p => { if (!busy("config/team")) { S.team.name = p.new.name; render(); } })
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "leagues", filter: `id=eq.${S.leagueId}` }, p => {
+      S.league = { ...S.league, ...p.new }; S.team.activeSeasonId = p.new.current_season_id || "";
+      if (!busy("config/rules")) S.rules = rulesFrom(p.new);
+      render();
+    })
     .subscribe();
   render();
 }
 
 /* ---------- sign-in ---------- */
-async function refreshTeams() {
-  const [t, h] = await Promise.all([sb.rpc("list_teams"), sb.rpc("league_has_admin")]);
-  if (t.error) { S.gate.msg = "Can't reach the league server. Check your connection and reload."; S.teams = []; }
-  else S.teams = t.data || [];
+async function refreshGate() {
+  const [l, h] = await Promise.all([sb.rpc("list_leagues"), sb.rpc("league_has_admin")]);
+  if (l.error) { S.gate.msg = "Can't reach the league server. Check your connection and reload."; S.leagues = []; }
+  else S.leagues = l.data || [];
   S.hasLeague = !!h.data;
+  const g = S.gate;
+  if (!g.leagueId || !S.leagues.some(x => x.id === g.leagueId)) { try { g.leagueId = localStorage.getItem("ss-last-league") || ""; } catch (e) {} }
+  if (!S.leagues.some(x => x.id === g.leagueId)) g.leagueId = S.leagues.length === 1 ? S.leagues[0].id : "";
+  await refreshGateTeams();
+}
+async function refreshGateTeams() {
+  const g = S.gate;
+  if (!g.leagueId) { S.teams = []; return; }
+  const { data } = await sb.rpc("list_signin_teams", { p_league: g.leagueId });
+  S.teams = data || [];
+  if (!S.teams.some(t => t.id === g.teamId)) { try { g.teamId = localStorage.getItem("ss-last-team") || ""; } catch (e) {} }
+  if (!S.teams.some(t => t.id === g.teamId)) g.teamId = "";
 }
 async function showGate(msg) {
-  S.phase = "gate"; S.gate.msg = msg || S.gate.msg || ""; render();
-  await refreshTeams();
-  if (!S.gate.teamId || !S.teams.some(t => t.id === S.gate.teamId)) S.gate.teamId = (() => { try { return localStorage.getItem("ss-last-team") || ""; } catch (e) { return ""; } })();
+  S.phase = "gate"; S.gate.msg = msg || S.gate.msg || ""; S.leagues = null; render();
+  await refreshGate();
   render();
+}
+// teams an admin can switch between (grouped by league)
+async function loadAdminTeams() {
+  const [t, l] = await Promise.all([sb.from("teams").select("id,name,league_id").order("name"), sb.from("leagues").select("id,name,current_season_id").order("name")]);
+  S.adminTeams = t.data || []; S.adminLeagues = l.data || [];
 }
 async function afterAuth() {
   const { data, error } = await sb.rpc("whoami");
   if (error || !data?.uid) return signOut("Please sign in again.");
   S.username = data.admin?.username || ""; S.uid = data.uid;
   if (data.admin) {
-    S.role = data.admin.role; S.phase = "app";
-    if (S.role === "league") {
-      await refreshTeams();
-      let pick = null; try { pick = localStorage.getItem("ss-admin-team"); } catch (e) {}
-      const team = S.teams.find(t => t.id === pick) || S.teams[0];
-      S.view.tab = team ? S.view.tab : "league";
-      if (team) return loadTeam(team.id);
-      S.teamId = null; S.loaded = { team: true, seasons: true, matches: true, rules: true };
-      const le = await sb.from("league").select("rules_text,rules_file,rules_updated").eq("id", 1).maybeSingle();
-      S.rules = rulesFrom(le.data); return render();
-    }
-    return loadTeam(data.admin.team_id);
+    S.role = data.admin.role; S.adminLeague = data.admin.league_id || null; S.phase = "app";
+    if (S.role === "team") return loadTeam(data.admin.team_id);
+    await loadAdminTeams();
+    let pick = null; try { pick = localStorage.getItem("ss-admin-team"); } catch (e) {}
+    const team = S.adminTeams.find(t => t.id === pick) || S.adminTeams[0];
+    S.mgr.leagueId = S.mgr.leagueId || S.adminLeague || team?.league_id || S.adminLeagues[0]?.id || null;
+    if (team) return loadTeam(team.id);
+    S.teamId = null; S.leagueId = S.mgr.leagueId; S.view.tab = "league";
+    const lg = S.leagueId ? (await sb.from("leagues").select("rules_text,rules_file,rules_updated").eq("id", S.leagueId).maybeSingle()).data : null;
+    S.rules = rulesFrom(lg); S.loaded = { team: true, seasons: true, matches: true, rules: true };
+    return render();
   }
   if ((data.teams || []).length) { S.role = "member"; S.phase = "app"; if (S.view.tab === "admin" || S.view.tab === "league") S.view.tab = "matches"; return loadTeam(data.teams[0]); }
   return signOut();
@@ -518,7 +567,7 @@ async function signOut(msg) {
   try { if (S.role === "member") await sb.rpc("leave_team"); } catch (e) {}
   if (chan) { sb.removeChannel(chan); chan = null; }
   try { await sb.auth.signOut(); } catch (e) {}
-  Object.assign(S, { role: null, username: "", teamId: null, seasons: {}, matches: {}, team: { name: "", activeSeasonId: "" }, leagueAdmins: null });
+  Object.assign(S, { role: null, username: "", adminLeague: null, teamId: null, leagueId: null, seasons: {}, matches: {}, team: { name: "", activeSeasonId: "" }, leagueAdmins: null, adminTeams: [], adminLeagues: [], mgr: { leagueId: null, data: null, seasonId: null } });
   S.view = { tab: "matches", matchId: null, seasonId: null }; S.ui.modal = null; renderLayer();
   return showGate(msg || "");
 }
@@ -556,16 +605,16 @@ function render() {
   const seasons = seasonList();
   const tabs = [["matches","Matches"],["standings","Stats"]];
   if (isAdmin() && S.teamId) tabs.push(["admin","Team admin"]);
-  if (S.role === "league") tabs.push(["league","League"]);
+  if (isLeagueRole()) tabs.push(["league","League"]);
   tabs.push(["rules","Rules"]);
   if (!tabs.some(([k]) => k === S.view.tab)) S.view.tab = S.teamId ? "matches" : "league";
   app.innerHTML = `
   <header>
     <div class="brand">
-      <div><div class="eyebrow">The Scratch Sheet${s ? " · " + esc(s.name) : ""}</div><h1>${esc(S.teamId ? (S.team.name || "Your team") : "No team yet")}</h1></div>
+      <div><div class="eyebrow">${esc(S.league?.name || "The Scratch Sheet")}${s ? " · " + esc(s.name) : ""}</div><h1>${esc(S.teamId ? (S.team.name || "Your team") : "No team yet")}</h1></div>
       <div class="row">
-        <span class="who-chip">${S.role === "member" ? "Team member" : `<b>${esc(S.username)}</b> ${S.role === "league" ? "League admin" : "Team admin"}`}<button class="btn small ghost" data-act="sign-out">${S.role === "member" ? "Leave" : "Sign out"}</button></span>
-        ${S.role === "league" && (S.teams || []).length > 1 ? `<select id="team-pick" aria-label="Team" style="width:auto">${S.teams.map(t => `<option value="${t.id}" ${t.id === S.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select>` : ""}
+        <span class="who-chip">${S.role === "member" ? "Team member" : `<b>${esc(S.username)}</b> ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`}<button class="btn small ghost" data-act="sign-out">${S.role === "member" ? "Leave" : "Sign out"}</button></span>
+        ${isLeagueRole() && S.adminTeams.length > 1 ? `<select id="team-pick" aria-label="Team" style="width:auto">${S.adminLeagues.map(l => { const ts = S.adminTeams.filter(t => t.league_id === l.id); return ts.length ? `<optgroup label="${esc(l.name)}">${ts.map(t => `<option value="${t.id}" ${t.id === S.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</optgroup>` : ""; }).join("")}</select>` : ""}
         ${rec ? `<span class="record">Matches <b>${rec.W}–${rec.L}${rec.T ? "–" + rec.T : ""}</b></span>` : ""}
         ${seasons.length > 1 ? `<select id="season-pick" aria-label="Season" style="width:auto">${seasons.map(x => `<option value="${x.id}" ${x.id === sid ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : ""}
       </div>
@@ -573,14 +622,15 @@ function render() {
     <nav style="--n:${tabs.length}">${tabs.map(([k, l]) => `<button data-act="tab" data-v="${k}" aria-current="${S.view.tab === k}"${k === "rules" ? ' class="push"' : ""}>${l}</button>`).join("")}</nav>
   </header>
   <main>
-    ${S.view.tab === "league" ? viewLeague() : S.view.tab === "rules" ? viewRules() : !S.teamId ? `<div class="panel empty"><p>Create your first team on the League tab.</p></div>` : S.view.tab === "admin" ? viewAdmin() : S.view.tab === "rules" ? viewRules() : !s ? viewNoSeason() : S.view.tab === "standings" ? viewStandings(sid) : S.view.matchId && S.matches[S.view.matchId] ? viewMatch(S.view.matchId) : viewMatches(sid)}
+    ${S.view.tab === "league" ? viewLeague() : S.view.tab === "rules" ? viewRules() : !S.teamId ? `<div class="panel empty"><p>Create a league and its first team on the League tab.</p></div>` : S.view.tab === "admin" ? viewAdmin() : S.view.tab === "rules" ? viewRules() : !s ? viewNoSeason() : S.view.tab === "standings" ? viewStandings(sid) : S.view.matchId && S.matches[S.view.matchId] ? viewMatch(S.view.matchId) : viewMatches(sid)}
   </main>`;
   renderLayer();
   if (keep) { const el = document.getElementById(keep.id); if (el) { if (keep.text) { el.value = keep.val; try { el.setSelectionRange(keep.s, keep.e); } catch (e) {} } el.focus({ preventScroll: true }); } }
 }
 
 function viewNoSeason() {
-  if (!isAdmin()) return `<div class="panel empty"><h2>No season yet</h2><p>Your team admin hasn't set up a season or roster yet. Check back once they have.</p></div>`;
+  if (!isLeagueRole()) return `<div class="panel empty"><h2>No season yet</h2><p>This team hasn't been added to a season yet. Your league admin does that on the League tab.</p></div>`;
+  return `<div class="panel empty"><h2>No season yet</h2><p>This team isn't in any season. Add it to a season on the League tab, then build its roster under Team admin.</p><button class="btn primary w" data-act="tab" data-v="league">Open League tab</button></div>`;
   return `<div class="panel empty"><h2>Set up your team</h2><p>Name your team, add a season, and enter the players on the roster. Then come back here to build match lineups.</p><button class="btn primary w" data-act="tab" data-v="admin">Open team admin</button></div>`;
 }
 
@@ -751,7 +801,7 @@ function viewRules() {
   <div class="row spread"><h2>League rules</h2>${r.text ? `<span class="small muted">Posted ${esc(upd)}${r.fileName ? " from " + esc(r.fileName) : ""}</span>` : ""}</div>
   ${r.text ? `<section class="panel"><div class="rules">${rulesHtml(r.text)}</div></section>`
     : `<div class="panel empty"><p>No rules posted yet. Upload the league rulebook below so the whole team can read it here.</p></div>`}
-  ${S.role === "league" ? `<section class="panel">
+  ${canLeague(S.leagueId) ? `<section class="panel">
     <h3>${r.text ? "Replace posted rules" : "Post rules"}</h3>
     <p class="small muted" style="margin:0">Upload a PDF, Word (.docx), text (.txt or .md) or web page (.html) file, or paste the text. You can tidy the text before posting.</p>
     <div class="row"><input type="file" id="rules-file" class="w" accept=".pdf,.docx,.txt,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="max-width:100%"></div>
@@ -820,38 +870,28 @@ function viewAdmin() {
     <label class="f">Team name<input type="text" id="team-name" class="w" data-field="team-name" placeholder="e.g. Corner Pocket Crew" value="${esc(S.team.name)}"></label>
   </section>
   ${viewTeamPin()}
-  ${S.role === "team" ? viewAccount() : ""}
-  <section class="panel">
-    <h3>Add a season</h3>
-    <div class="grid2">
-      <label class="f">Season name<input type="text" id="new-season" class="w" placeholder="e.g. Fall 2026"></label>
-      <label class="f">Start with players from<select id="copy-from" class="w"><option value="">Nobody (empty roster)</option>${seasons.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></label>
-    </div>
-    <div><button class="btn primary w" data-act="add-season">Add season</button></div>
-  </section>
+  <h3>Rosters</h3>
+  <p class="small muted" style="margin:0">Seasons are set by your league admin. Each season has its own roster.</p>
   ${seasons.map(x => {
     const open = S.ui.openSeason === x.id || (S.ui.openSeason == null && x.id === cur);
     const nMatches = Object.values(S.matches).filter(m => m.seasonId === x.id).length;
-    const armed = S.ui.armed === "season-" + x.id;
     const act = activePlayers(x), gone = (x.players || []).filter(p => p.removed);
+    const prev = seasons.find(y => y.id !== x.id && (y.created || 0) <= (x.created || 0) && activePlayers(y).length);
     return `<section class="season ${x.id === S.team.activeSeasonId ? "current" : ""}">
       <div class="row spread">
-        <div class="row"><h3>${esc(x.name)}</h3>${x.id === S.team.activeSeasonId ? `<span class="tag">Current season</span>` : ""}<span class="small muted">${act.length} of ${MAX_ROSTER} players · ${nMatches} matches</span>${act.length < MIN_ROSTER ? `<span class="tag" style="color:var(--warn)">Needs ${MIN_ROSTER - act.length} more for the ${MIN_ROSTER}-player minimum</span>` : ""}</div>
+        <div class="row"><h3>${esc(x.name)}</h3>${x.id === S.team.activeSeasonId ? `<span class="tag">Current season</span>` : ""}${x.inSeason ? "" : `<span class="tag" style="color:var(--muted)">Not entered</span>`}<span class="small muted">${act.length} of ${MAX_ROSTER} players · ${nMatches} matches</span>${act.length < MIN_ROSTER ? `<span class="tag" style="color:var(--warn)">Needs ${MIN_ROSTER - act.length} more for the ${MIN_ROSTER}-player minimum</span>` : ""}</div>
         <button class="btn ghost small" data-act="toggle-season" data-id="${x.id}">${open ? "Hide" : "Manage"}</button>
       </div>
       ${open ? `
-      <div class="grid2"><label class="f">Season name<input type="text" id="sn-${x.id}" class="w" data-field="season-name" data-id="${x.id}" value="${esc(x.name)}"></label></div>
       <div class="plist">
         ${act.map(p => { const a = S.ui.armed === "p-" + p.id; return `<div class="prow"><input type="text" id="pn-${p.id}" class="w" data-field="player-name" data-id="${x.id}" data-p="${p.id}" value="${esc(p.name)}" aria-label="Player name"><button class="btn danger small w ${a ? "armed" : ""}" data-act="rm-player" data-id="${x.id}" data-p="${p.id}">${a ? "Remove?" : "Remove"}</button></div>`; }).join("") || `<p class="small muted" style="margin:0">No players yet.</p>`}
       </div>
+      ${!act.length && prev ? `<div><button class="btn w" data-act="copy-roster" data-id="${x.id}" data-from="${prev.id}">Copy roster from ${esc(prev.name)} (${activePlayers(prev).length} players)</button></div>` : ""}
       <div class="prow"><input type="text" id="np-${x.id}" class="w" placeholder="New player name" data-enter="add-player" data-id="${x.id}"><button class="btn w" data-act="add-player" data-id="${x.id}">Add player</button></div>
-      ${gone.length ? `<div class="small muted">Removed: ${gone.map(p => `${esc(p.name)} <button class="btn ghost small w" data-act="restore-player" data-id="${x.id}" data-p="${p.id}">Restore</button>`).join(" ")}</div>` : ""}
-      <div class="row spread">
-        ${x.id !== S.team.activeSeasonId ? `<button class="btn w" data-act="set-current" data-id="${x.id}">Make current season</button>` : "<span></span>"}
-        <button class="btn danger w ${armed ? "armed" : ""}" data-act="rm-season" data-id="${x.id}">${armed ? `Delete season${nMatches ? ` and ${nMatches} matches` : ""}?` : "Delete season"}</button>
-      </div>` : ""}
+      ${gone.length ? `<div class="small muted">Removed: ${gone.map(p => `${esc(p.name)} <button class="btn ghost small w" data-act="restore-player" data-id="${x.id}" data-p="${p.id}">Restore</button>`).join(" ")}</div>` : ""}` : ""}
     </section>`;
-  }).join("")}`;
+  }).join("") || `<div class="panel empty"><p>This team isn't in a season yet. ${isLeagueRole() ? "Add it to a season on the League tab." : "Your league admin adds teams to seasons."}</p></div>`}
+  ${S.role === "team" ? viewAccount() : ""}`;
 }
 
 function renderScratch(md, L) {
@@ -901,17 +941,18 @@ function viewGate() {
     <label class="f">Confirm new password<input type="password" id="rc-pass2" autocomplete="new-password"></label>
     <button class="btn primary" data-act="recover-save" ${busyAttr}>${g.busy ? "Saving…" : "Save password"}</button>
   </section>`;
-  if (S.phase === "gate" && S.teams === null) return `<section class="panel gate"><p class="muted" style="margin:0">Loading…</p></section>`;
+  if (S.leagues === null) return `<section class="panel gate"><p class="muted" style="margin:0">Loading…</p></section>`;
   if (!S.hasLeague) return `
   <section class="panel gate">
-    <div><div class="eyebrow">First-time setup</div><h2>Create the league admin</h2></div>
-    <p class="small muted" style="margin:0">This is the one account that creates teams, sets team PINs and appoints other admins. You can't change who claims it later, so set it up yourself.</p>
+    <div><div class="eyebrow">First-time setup</div><h2>Create the owner account</h2></div>
+    <p class="small muted" style="margin:0">The owner runs every league: creates leagues and seasons, adds teams, and appoints league and team admins. Set this up yourself before you share the link.</p>
     ${msg}
     <label class="f">Your email<input type="email" id="su-user" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com"></label>
     <label class="f">Password<input type="password" id="su-pass" autocomplete="new-password" placeholder="At least 8 characters"></label>
     <label class="f">Confirm password<input type="password" id="su-pass2" autocomplete="new-password"></label>
-    <button class="btn primary" data-act="gate-setup" ${busyAttr}>${g.busy ? "Setting up…" : "Create league admin"}</button>
+    <button class="btn primary" data-act="gate-setup" ${busyAttr}>${g.busy ? "Setting up…" : "Create owner account"}</button>
   </section>`;
+  const leagueSel = S.leagues.length ? `<label class="f">League<select id="gate-league">${S.leagues.length > 1 ? `<option value="">Choose your league</option>` : ""}${S.leagues.map(l => `<option value="${l.id}" ${l.id === g.leagueId ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></label>` : `<p class="small muted" style="margin:0">No leagues yet. An admin needs to set one up.</p>`;
   return `
   <section class="panel gate">
     <div class="seg gate-seg" role="tablist">
@@ -920,7 +961,8 @@ function viewGate() {
     </div>
     ${msg}
     ${g.tab === "team" ? `
-      <label class="f">Your team<select id="gate-team">${S.teams?.length ? `<option value="">Choose your team</option>` + S.teams.map(t => `<option value="${t.id}" ${t.id === g.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("") : `<option value="">${S.teams ? "No teams yet" : "Loading teams…"}</option>`}</select></label>
+      ${leagueSel}
+      ${g.leagueId ? `<label class="f">Team<select id="gate-team">${S.teams.length ? `<option value="">Choose your team</option>` + S.teams.map(t => `<option value="${t.id}" ${t.id === g.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("") : `<option value="">No teams in this season yet</option>`}</select></label>` : ""}
       <label class="f">Team PIN<input type="password" id="gate-pin" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="••••"></label>
       <button class="btn primary" data-act="gate-join" ${busyAttr}>${g.busy ? "Checking…" : "Enter"}</button>
       <p class="small muted" style="margin:0">Ask your captain for the team's 4-digit PIN. You'll need it again next time you open the app.</p>`
@@ -928,11 +970,11 @@ function viewGate() {
       <label class="f">Email<input type="email" id="gate-user" autocomplete="email" autocapitalize="none" spellcheck="false"></label>
       <label class="f">Password<input type="password" id="gate-pass" autocomplete="current-password"></label>
       <button class="btn primary" data-act="gate-admin" ${busyAttr}>${g.busy ? "Signing in…" : "Sign in"}</button>
-      <div class="row spread"><span class="small muted">For league and team admins.</span><button class="btn ghost small" data-act="gate-forgot">Forgot password?</button></div>`}
+      <div class="row spread"><span class="small muted">For owners, league admins and team admins.</span><button class="btn ghost small" data-act="gate-forgot">Forgot password?</button></div>`}
   </section>`;
 }
 
-/* ---------- team PIN (team admin tab) ---------- */
+/* ---------- team PIN + account ---------- */
 function viewTeamPin() {
   const armed = S.ui.armed === "pin-set";
   return `<section class="panel">
@@ -941,73 +983,139 @@ function viewTeamPin() {
     <div class="prow"><input type="password" id="new-pin" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New PIN"><button class="btn w ${armed ? "armed danger" : ""}" data-act="pin-set">${armed ? "Change PIN and sign everyone out?" : "Change PIN"}</button></div>
   </section>`;
 }
-
-/* ---------- league tab (league admin) ---------- */
-function viewLeague() {
-  const teams = S.teams || [], admins = S.leagueAdmins;
-  if (!admins) { loadAdmins(); }
-  const teamName = id => teams.find(t => t.id === id)?.name || "—";
-  const teamOpts = sel => teams.map(t => `<option value="${t.id}" ${t.id === sel ? "selected" : ""}>${esc(t.name)}</option>`).join("");
-  return `
-  <h2>League</h2>
-  <section class="panel">
-    <h3>Teams <span class="muted small">${teams.length}</span></h3>
-    ${teams.map(t => { const a = S.ui.armed === "team-del-" + t.id, pinOpen = S.ui.pinFor === t.id; return `
-      <div class="lrow">
-        <div style="min-width:0"><b>${esc(t.name)}</b>${t.id === S.teamId ? ` <span class="tag">Open now</span>` : ""}${t.has_pin ? "" : ` <span class="tag" style="color:var(--warn)">No PIN</span>`}</div>
-        <div class="row">
-          ${t.id === S.teamId ? "" : `<button class="btn small" data-act="team-open" data-id="${t.id}">Open</button>`}
-          <button class="btn small w" data-act="team-pin-open" data-id="${t.id}">Set PIN</button>
-          <button class="btn small danger w ${a ? "armed" : ""}" data-act="team-del" data-id="${t.id}">${a ? "Delete team and all its data?" : "Delete"}</button>
-        </div>
-        ${pinOpen ? `<div class="prow" style="grid-column:1/-1"><input type="password" id="tp-${t.id}" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New 4-digit PIN"><button class="btn w primary" data-act="team-pin-save" data-id="${t.id}">Save PIN</button></div>` : ""}
-      </div>`; }).join("") || `<p class="small muted" style="margin:0">No teams yet. Create the first one below.</p>`}
-    <div class="grid2">
-      <label class="f">New team name<input type="text" id="nt-name" class="w" placeholder="e.g. Itchy &amp; Scratchy"></label>
-      <label class="f">Team PIN<input type="password" id="nt-pin" class="pin w" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="4 digits"></label>
-    </div>
-    <div><button class="btn primary w" data-act="team-create">Create team</button></div>
-  </section>
-
-  <section class="panel">
-    <h3>Admins <span class="muted small">${admins ? admins.length : ""}</span></h3>
-    ${!admins ? `<p class="small muted" style="margin:0">Loading admins…</p>` : admins.map(a => { const me = a.user_id === S.uid, rm = S.ui.armed === "adm-rm-" + a.user_id, rp = S.ui.pwFor === a.user_id; return `
-      <div class="lrow">
-        <div style="min-width:0"><b>${esc(a.username)}</b>${me ? ` <span class="tag">You</span>` : ""}<div class="small muted">${a.role === "league" ? "League admin" : "Team admin · " + esc(teamName(a.team_id))}</div></div>
-        <div class="row">
-          <select class="w adm-role" data-act="adm-role" data-id="${a.user_id}" aria-label="Role for ${esc(a.username)}" style="width:auto">
-            <option value="league" ${a.role === "league" ? "selected" : ""}>League admin</option>
-            ${teams.map(t => `<option value="team:${t.id}" ${a.role === "team" && a.team_id === t.id ? "selected" : ""}>Admin of ${esc(t.name)}</option>`).join("")}
-          </select>
-          ${me ? "" : `<button class="btn small w" data-act="adm-pw-open" data-id="${a.user_id}">Reset password</button>
-          <button class="btn small danger w ${rm ? "armed" : ""}" data-act="adm-rm" data-id="${a.user_id}">${rm ? "Remove admin?" : "Remove"}</button>`}
-        </div>
-        ${rp ? `<div class="prow" style="grid-column:1/-1"><input type="text" id="pw-${a.user_id}" autocomplete="off" placeholder="New password (8+ characters)"><button class="btn w primary" data-act="adm-pw-save" data-id="${a.user_id}">Save password</button></div>` : ""}
-      </div>`; }).join("")}
-    <h3 style="margin-top:6px">Add an admin</h3>
-    <div class="grid2">
-      <label class="f">Email<input type="email" id="na-user" class="w" autocapitalize="none" spellcheck="false" placeholder="name@example.com"></label>
-      <label class="f">Temporary password<input type="text" id="na-pass" class="w" autocomplete="off" placeholder="8+ characters"></label>
-      <label class="f">Role<select id="na-role" class="w"><option value="">Choose a role</option><option value="league">League admin (all teams)</option>${teams.map(t => `<option value="team:${t.id}">Admin of ${esc(t.name)}</option>`).join("")}</select></label>
-    </div>
-    <div><button class="btn primary w" data-act="adm-add">Add admin</button></div>
-    <p class="small muted" style="margin:0">Give the new admin their email and temporary password. They can change the password under Your account, or use "Forgot password?" on the sign-in screen.</p>
-  </section>
-
-  ${viewAccount()}`;
-}
 function viewAccount() {
   return `<section class="panel">
     <h3>Your account <span class="muted small">${esc(S.username)}</span></h3>
     <div class="prow"><input type="password" id="my-pass" autocomplete="new-password" placeholder="New password (8+ characters)"><button class="btn w" data-act="my-pass">Change password</button></div>
   </section>`;
 }
+
+/* ---------- league tab (owner / league admin) ---------- */
+async function loadMgr(leagueId) {
+  if (!leagueId) { S.mgr.data = { seasons: [], teams: [], st: [], league: null }; return render(); }
+  if (S.mgr.loading === leagueId) return; S.mgr.loading = leagueId;
+  const [lg, ls, tm] = await Promise.all([
+    sb.from("leagues").select("id,name,current_season_id").eq("id", leagueId).maybeSingle(),
+    sb.from("league_seasons").select("id,name,created_at").eq("league_id", leagueId).order("created_at"),
+    sb.from("teams").select("id,name,created_at").eq("league_id", leagueId).order("name"),
+  ]);
+  const ids = (ls.data || []).map(s => s.id);
+  const st = ids.length ? (await sb.from("season_teams").select("season_id,team_id").in("season_id", ids)).data || [] : [];
+  const { data: pins } = await sb.rpc("list_signin_teams", { p_league: leagueId });
+  S.mgr.loading = null;
+  if (S.mgr.leagueId !== leagueId) return;
+  S.mgr.data = { league: lg.data, seasons: ls.data || [], teams: tm.data || [], st, nopin: new Set() };
+  (pins || []).forEach(p => { if (!p.has_pin) S.mgr.data.nopin.add(p.id); });
+  if (!S.mgr.seasonId || !ids.includes(S.mgr.seasonId)) S.mgr.seasonId = lg.data?.current_season_id || ids[ids.length - 1] || null;
+  render();
+}
 async function loadAdmins() {
   if (S.loadingAdmins) return; S.loadingAdmins = true;
-  const { data, error } = await sb.from("admins").select("user_id,username,role,team_id").order("username");
+  const { data, error } = await sb.from("admins").select("user_id,username,role,league_id,team_id").order("username");
   S.loadingAdmins = false;
   if (error) { toast(errMsg(error)); S.leagueAdmins = []; } else S.leagueAdmins = data;
   render();
+}
+function viewLeague() {
+  const lid = S.mgr.leagueId, d = S.mgr.data;
+  if (lid && (!d || d.league?.id !== lid)) { loadMgr(lid); }
+  if (!S.leagueAdmins) loadAdmins();
+  const owner = S.role === "owner", leagues = S.adminLeagues || [];
+  const lname = id => leagues.find(l => l.id === id)?.name || "—";
+  const tname = id => (S.adminTeams || []).find(t => t.id === id)?.name || "—";
+  const ready = d && d.league?.id === lid;
+  const sid = S.mgr.seasonId, season = ready ? d.seasons.find(s => s.id === sid) : null;
+  const inS = ready ? new Set(d.st.filter(x => x.season_id === sid).map(x => x.team_id)) : new Set();
+  const seasonTeams = ready ? d.teams.filter(t => inS.has(t.id)) : [], others = ready ? d.teams.filter(t => !inS.has(t.id)) : [];
+  const teamRow = (t, inSeason) => { const a = S.ui.armed === "team-del-" + t.id, ra = S.ui.armed === "team-out-" + t.id, pinOpen = S.ui.pinFor === t.id; return `
+      <div class="lrow">
+        <div style="min-width:0"><b>${esc(t.name)}</b>${t.id === S.teamId ? ` <span class="tag">Open now</span>` : ""}${inSeason && d.nopin.has(t.id) ? ` <span class="tag" style="color:var(--warn)">No PIN</span>` : ""}</div>
+        <div class="row">
+          ${t.id === S.teamId ? "" : `<button class="btn small" data-act="team-open" data-id="${t.id}">Open</button>`}
+          ${inSeason ? `<button class="btn small w" data-act="team-pin-open" data-id="${t.id}">Set PIN</button>
+          <button class="btn small w ${ra ? "armed danger" : ""}" data-act="team-out" data-id="${t.id}">${ra ? "Remove from this season?" : "Remove from season"}</button>`
+          : `<button class="btn small w" data-act="team-in" data-id="${t.id}">Add to ${esc(season?.name || "season")}</button>
+          <button class="btn small danger w ${a ? "armed" : ""}" data-act="team-del" data-id="${t.id}">${a ? "Delete team and all its matches?" : "Delete"}</button>`}
+        </div>
+        ${pinOpen ? `<div class="prow" style="grid-column:1/-1"><input type="password" id="tp-${t.id}" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New 4-digit PIN"><button class="btn w primary" data-act="team-pin-save" data-id="${t.id}">Save PIN</button></div>` : ""}
+      </div>`; };
+  const admins = S.leagueAdmins;
+  const roleLabel = a => a.role === "owner" ? "Owner · all leagues" : a.role === "league" ? "League admin · " + esc(lname(a.league_id)) : "Team admin · " + esc(tname(a.team_id));
+  const roleOpts = sel => (owner ? `<option value="owner" ${sel === "owner" ? "selected" : ""}>Owner (all leagues)</option>` + leagues.map(l => `<option value="league:${l.id}" ${sel === "league:" + l.id ? "selected" : ""}>League admin · ${esc(l.name)}</option>`).join("") : "")
+    + (S.adminTeams || []).filter(t => owner || t.league_id === S.adminLeague).map(t => `<option value="team:${t.id}" ${sel === "team:" + t.id ? "selected" : ""}>Team admin · ${esc(t.name)}${owner && leagues.length > 1 ? " (" + esc(lname(t.league_id)) + ")" : ""}</option>`).join("");
+  const delL = S.ui.armed === "league-del-" + lid;
+  return `
+  <div class="row spread"><h2>League</h2>
+    ${owner && leagues.length > 1 ? `<select id="mgr-league" aria-label="League" style="width:auto">${leagues.map(l => `<option value="${l.id}" ${l.id === lid ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select>` : ""}
+  </div>
+  ${!lid ? `<div class="panel empty"><p>No leagues yet. Create the first one below.</p></div>` : !ready ? `<div class="panel"><p class="muted" style="margin:0">Loading league…</p></div>` : `
+  <section class="panel">
+    <label class="f">League name<input type="text" id="lg-name-${lid}" class="w" data-field="league-name" value="${esc(d.league.name)}"></label>
+  </section>
+
+  <section class="panel">
+    <h3>Seasons</h3>
+    ${d.seasons.slice().reverse().map(s => { const cur = s.id === d.league.current_season_id, a = S.ui.armed === "season-del-" + s.id, n = d.st.filter(x => x.season_id === s.id).length; return `
+      <div class="lrow">
+        <div style="min-width:0"><b>${esc(s.name)}</b>${cur ? ` <span class="tag">Current season</span>` : ""}<div class="small muted">${n} team${n === 1 ? "" : "s"}</div></div>
+        <div class="row">
+          ${s.id === sid ? "" : `<button class="btn small" data-act="season-view" data-id="${s.id}">Teams</button>`}
+          ${cur ? "" : `<button class="btn small w" data-act="season-current" data-id="${s.id}">Make current</button>`}
+          <button class="btn small danger w ${a ? "armed" : ""}" data-act="season-del" data-id="${s.id}">${a ? "Delete season, its rosters and matches?" : "Delete"}</button>
+        </div>
+      </div>`; }).join("") || `<p class="small muted" style="margin:0">No seasons yet.</p>`}
+    <div class="grid2">
+      <label class="f">New season<input type="text" id="ns-name" class="w" placeholder="e.g. Spring 2027"></label>
+      <label class="f">Teams<select id="ns-carry" class="w"><option value="1">Bring teams from the current season</option><option value="">Start with no teams</option></select></label>
+    </div>
+    <div class="row"><button class="btn primary w" data-act="season-add">Add season</button><span class="small muted">The new season becomes current, so players see its teams when they sign in.</span></div>
+  </section>
+
+  <section class="panel">
+    <h3>Teams in ${esc(season?.name || "this season")} <span class="muted small">${seasonTeams.length}</span></h3>
+    ${season ? seasonTeams.map(t => teamRow(t, true)).join("") || `<p class="small muted" style="margin:0">No teams in this season yet.</p>` : `<p class="small muted" style="margin:0">Add a season first.</p>`}
+    ${season ? `<div class="grid2">
+      <label class="f">New team name<input type="text" id="nt-name" class="w" placeholder="e.g. Itchy &amp; Scratchy"></label>
+      <label class="f">Team PIN<input type="password" id="nt-pin" class="pin w" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="4 digits"></label>
+    </div>
+    <div><button class="btn primary w" data-act="team-create">Add new team to ${esc(season.name)}</button></div>` : ""}
+    ${others.length ? `<h3 style="margin-top:6px">Other teams in this league <span class="muted small">not in ${esc(season?.name || "this season")}</span></h3>${others.map(t => teamRow(t, false)).join("")}` : ""}
+  </section>
+
+  ${owner ? `<section class="panel"><div class="row spread"><span class="small muted">Deleting a league removes its seasons, teams, rosters and matches.</span><button class="btn danger w ${delL ? "armed" : ""}" data-act="league-del">${delL ? "Delete this league and everything in it?" : "Delete league"}</button></div></section>` : ""}`}
+
+  ${owner ? `<section class="panel">
+    <h3>New league</h3>
+    <div class="grid2">
+      <label class="f">League name<input type="text" id="nl-name" class="w" placeholder="e.g. OLS Tuesday 8-Ball"></label>
+      <label class="f">First season<input type="text" id="nl-season" class="w" placeholder="e.g. Fall 2026"></label>
+    </div>
+    <div><button class="btn primary w" data-act="league-create">Create league</button></div>
+  </section>` : ""}
+
+  <section class="panel">
+    <h3>Admins <span class="muted small">${admins ? admins.length : ""}</span></h3>
+    ${!admins ? `<p class="small muted" style="margin:0">Loading admins…</p>` : admins.map(a => { const me = a.user_id === S.uid, rm = S.ui.armed === "adm-rm-" + a.user_id, rp = S.ui.pwFor === a.user_id; const sel = a.role === "owner" ? "owner" : a.role === "league" ? "league:" + a.league_id : "team:" + a.team_id; return `
+      <div class="lrow">
+        <div style="min-width:0"><b class="em">${esc(a.username)}</b>${me ? ` <span class="tag">You</span>` : ""}<div class="small muted">${roleLabel(a)}</div></div>
+        ${me ? "" : `<div class="row">
+          <select class="w" data-act="adm-role" data-id="${a.user_id}" aria-label="Role for ${esc(a.username)}" style="width:auto">${roleOpts(sel)}</select>
+          <button class="btn small w" data-act="adm-pw-open" data-id="${a.user_id}">Reset password</button>
+          <button class="btn small danger w ${rm ? "armed" : ""}" data-act="adm-rm" data-id="${a.user_id}">${rm ? "Remove admin?" : "Remove"}</button>
+        </div>`}
+        ${rp ? `<div class="prow" style="grid-column:1/-1"><input type="text" id="pw-${a.user_id}" autocomplete="off" placeholder="New password (8+ characters)"><button class="btn w primary" data-act="adm-pw-save" data-id="${a.user_id}">Save password</button></div>` : ""}
+      </div>`; }).join("")}
+    <h3 style="margin-top:6px">Add an admin</h3>
+    <div class="grid2">
+      <label class="f">Email<input type="email" id="na-user" class="w" autocapitalize="none" spellcheck="false" placeholder="name@example.com"></label>
+      <label class="f">Temporary password<input type="text" id="na-pass" class="w" autocomplete="off" placeholder="8+ characters"></label>
+      <label class="f">Role<select id="na-role" class="w"><option value="">Choose a role</option>${roleOpts("")}</select></label>
+    </div>
+    <div><button class="btn primary w" data-act="adm-add">Add admin</button></div>
+    <p class="small muted" style="margin:0">Give the new admin their email and temporary password. They can change it under Your account, or use "Forgot password?" on the sign-in screen.</p>
+  </section>
+
+  ${viewAccount()}`;
 }
 
 /* ---------- sign-in & league actions ---------- */
@@ -1016,20 +1124,21 @@ async function gateAction(a, b) {
   const fail = m => { g.busy = false; g.ok = false; g.msg = m; render(); };
   if (a === "gate-tab") { g.tab = b.dataset.v; g.msg = ""; render(); return true; }
   if (a === "gate-join") {
-    const team = $("#gate-team").value, pin = $("#gate-pin").value.trim();
+    const team = $("#gate-team")?.value, pin = $("#gate-pin").value.trim();
+    if (!g.leagueId) return fail("Choose your league.");
     if (!team) return fail("Choose your team.");
     if (!/^\d{4}$/.test(pin)) return fail("Enter the 4-digit team PIN.");
     g.busy = true; g.msg = ""; g.teamId = team; render();
-    try { localStorage.setItem("ss-last-team", team); } catch (e) {}
+    try { localStorage.setItem("ss-last-team", team); localStorage.setItem("ss-last-league", g.leagueId); } catch (e) {}
     let { data: ses } = await sb.auth.getSession();
     if (!ses?.session) {
       const r = await sb.auth.signInAnonymously();
-      if (r.error) return fail(/anonymous/i.test(errMsg(r.error)) ? "Team sign-in isn't turned on yet. The league admin needs to allow anonymous sign-ins in Supabase." : errMsg(r.error));
+      if (r.error) return fail(/anonymous/i.test(errMsg(r.error)) ? "Team sign-in isn't turned on yet. The owner needs to allow anonymous sign-ins in Supabase." : errMsg(r.error));
     }
     const { data, error } = await sb.rpc("join_team", { p_team: team, p_pin: pin });
     if (error) return fail(errMsg(error));
     if (data === "ok") { g.busy = false; g.msg = ""; return afterAuth(); }
-    return fail({ wrong: "That PIN didn't match. Try again.", locked: "Too many wrong PINs. Wait 15 minutes and try again.", no_pin: "This team doesn't have a PIN yet. Ask the league admin to set one.", no_team: "That team no longer exists." }[data] || "Couldn't check the PIN.");
+    return fail({ wrong: "That PIN didn't match. Try again.", locked: "Too many wrong PINs. Wait 15 minutes and try again.", no_pin: "This team doesn't have a PIN yet. Ask your league admin to set one.", no_team: "That team no longer exists." }[data] || "Couldn't check the PIN.");
   }
   if (a === "gate-admin") {
     const u = $("#gate-user").value.trim().toLowerCase(), p = $("#gate-pass").value;
@@ -1039,8 +1148,8 @@ async function gateAction(a, b) {
     const { error } = await sb.auth.signInWithPassword({ email: toEmail(u), password: p });
     if (error) return fail(/invalid/i.test(errMsg(error)) ? "Wrong email or password." : /confirm/i.test(errMsg(error)) ? "Confirm your email first. Check your inbox for the link from Supabase." : errMsg(error));
     let who = await sb.rpc("whoami");
-    if (!who.data?.admin && !S.hasLeague) { const c = await sb.rpc("claim_league_admin", { p_username: u }); if (!c.error) { S.view.tab = "league"; who = await sb.rpc("whoami"); } }
-    if (!who.data?.admin) { await sb.auth.signOut(); return fail("That account isn't an admin. Ask the league admin."); }
+    if (!who.data?.admin && !S.hasLeague) { const c = await sb.rpc("claim_owner", { p_username: u }); if (!c.error) { S.view.tab = "league"; who = await sb.rpc("whoami"); } }
+    if (!who.data?.admin) { await sb.auth.signOut(); return fail("That account isn't an admin. Ask your league admin."); }
     g.busy = false; return afterAuth();
   }
   if (a === "gate-forgot") {
@@ -1070,56 +1179,117 @@ async function gateAction(a, b) {
     await sb.auth.signOut().catch(() => {});
     const r = await sb.auth.signUp({ email: toEmail(u), password: p });
     if (r.error) return fail(errMsg(r.error));
-    if (!r.data.session) { g.tab = "admin"; return fail("Check your email and tap the confirmation link, then sign in here with the Admin tab. Your league admin setup finishes on that first sign-in."); }
-    const c = await sb.rpc("claim_league_admin", { p_username: u });
+    if (!r.data.session) { g.tab = "admin"; return fail("Check your email and tap the confirmation link, then sign in here with the Admin tab. Your owner setup finishes on that first sign-in."); }
+    const c = await sb.rpc("claim_owner", { p_username: u });
     if (c.error) { await sb.auth.signOut(); return fail(errMsg(c.error)); }
     g.busy = false; S.view.tab = "league"; return afterAuth();
   }
   return false;
 }
 
+async function refreshAdminData(lid) {
+  S.mgr.loading = null; S.mgr.data = null; S.leagueAdmins = null;
+  await loadAdminTeams();
+  if (S.teamId && S.leagueId === lid) {
+    const { data } = await sb.from("leagues").select("id,name,current_season_id,rules_text,rules_file,rules_updated").eq("id", lid).maybeSingle();
+    if (data) { S.league = data; S.team.activeSeasonId = data.current_season_id || ""; S.view.seasonId = null; S.ui.openSeason = null; }
+    await loadSeasons();
+  }
+  render();
+}
 async function leagueAction(a, b) {
-  const id = b.dataset.id, rpc = async (fn, args, ok) => {
-    const { error } = await sb.rpc(fn, args);
-    if (error) { toast(errMsg(error)); return false; }
-    if (ok) toast(ok); return true;
-  };
+  const id = b.dataset.id, lid = S.mgr.leagueId;
+  const say = (error, ok) => { if (error) { toast(errMsg(error)); return false; } if (ok) toast(ok); return true; };
   if (a === "team-open") { try { localStorage.setItem("ss-admin-team", id); } catch (e) {} S.view.tab = "matches"; await loadTeam(id); return true; }
   if (a === "team-pin-open") { S.ui.pinFor = S.ui.pinFor === id ? null : id; render(); setTimeout(() => $("#tp-" + id)?.focus(), 0); return true; }
   if (a === "team-pin-save") {
     const pin = $("#tp-" + id).value.trim(); if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return true; }
-    if (await rpc("set_team_pin", { p_team: id, p_pin: pin }, "PIN saved. Players on that team need the new PIN.")) { S.ui.pinFor = null; await refreshTeams(); render(); }
+    const { error } = await sb.rpc("set_team_pin", { p_team: id, p_pin: pin });
+    if (say(error, "PIN saved. Players on that team need the new PIN.")) { S.ui.pinFor = null; await refreshAdminData(lid); }
     return true;
   }
   if (a === "team-create") {
     const name = $("#nt-name").value.trim(), pin = $("#nt-pin").value.trim();
     if (!name) { toast("Give the team a name."); return true; }
     if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return true; }
-    const { data, error } = await sb.rpc("create_team", { p_name: name, p_pin: pin });
-    if (error) { toast(errMsg(error)); return true; }
-    toast(`Created ${name}`); await refreshTeams();
-    if (!S.teamId) { try { localStorage.setItem("ss-admin-team", data); } catch (e) {} await loadTeam(data); S.view.tab = "league"; }
-    render(); return true;
+    const { data, error } = await sb.rpc("create_team", { p_league: lid, p_name: name, p_pin: pin, p_season: S.mgr.seasonId });
+    if (!say(error, `Added ${name}`)) return true;
+    await refreshAdminData(lid);
+    if (!S.teamId) { try { localStorage.setItem("ss-admin-team", data); } catch (e) {} await loadTeam(data); S.view.tab = "league"; render(); }
+    return true;
+  }
+  if (a === "team-in") { const { error } = await sb.from("season_teams").insert({ season_id: S.mgr.seasonId, team_id: id }); if (say(error, "Team added to the season")) await refreshAdminData(lid); return true; }
+  if (a === "team-out") {
+    if (S.ui.armed !== "team-out-" + id) { arm("team-out-" + id); return true; }
+    S.ui.armed = null;
+    const { error } = await sb.from("season_teams").delete().eq("season_id", S.mgr.seasonId).eq("team_id", id);
+    if (say(error, "Removed from the season. The team and its history are kept.")) await refreshAdminData(lid);
+    return true;
   }
   if (a === "team-del") {
     if (S.ui.armed !== "team-del-" + id) { arm("team-del-" + id); return true; }
     S.ui.armed = null;
     const { error } = await sb.from("teams").delete().eq("id", id);
-    if (error) { toast(errMsg(error)); return true; }
-    toast("Team deleted"); await refreshTeams(); S.leagueAdmins = null;
-    if (S.teamId === id) { const next = S.teams[0]; if (next) await loadTeam(next.id); else { if (chan) { sb.removeChannel(chan); chan = null; } S.teamId = null; S.seasons = {}; S.matches = {}; } }
-    render(); return true;
+    if (!say(error, "Team deleted")) return true;
+    await refreshAdminData(lid);
+    if (S.teamId === id) { const next = S.adminTeams[0]; if (next) await loadTeam(next.id); else { if (chan) { sb.removeChannel(chan); chan = null; } S.teamId = null; S.seasons = {}; S.matches = {}; render(); } }
+    return true;
+  }
+  if (a === "season-view") { S.mgr.seasonId = id; render(); return true; }
+  if (a === "season-current") { const { error } = await sb.from("leagues").update({ current_season_id: id }).eq("id", lid); if (say(error, "Current season changed")) { S.mgr.seasonId = id; await refreshAdminData(lid); } return true; }
+  if (a === "season-del") {
+    if (S.ui.armed !== "season-del-" + id) { arm("season-del-" + id); return true; }
+    S.ui.armed = null;
+    const { error } = await sb.from("league_seasons").delete().eq("id", id);
+    if (!say(error, "Season deleted")) return true;
+    // matches from that season stay with their teams but no longer have a season; remove them for a clean slate
+    if (S.teamId && S.leagueId === lid) Object.entries(S.matches).forEach(([mid, m]) => { if (m.seasonId === id && !m.locked) { delete S.matches[mid]; persist("matches", mid); } });
+    await refreshAdminData(lid); return true;
+  }
+  if (a === "season-add") {
+    const name = $("#ns-name").value.trim(), carry = $("#ns-carry").value === "1";
+    if (!name) { toast("Give the season a name, like Spring 2027."); return true; }
+    const cur = S.mgr.data?.league?.current_season_id;
+    const { data, error } = await sb.from("league_seasons").insert({ league_id: lid, name }).select("id").single();
+    if (!say(error)) return true;
+    if (carry && cur) {
+      const teams = S.mgr.data.st.filter(x => x.season_id === cur).map(x => ({ season_id: data.id, team_id: x.team_id }));
+      if (teams.length) { const r = await sb.from("season_teams").insert(teams); if (r.error) toast(errMsg(r.error)); }
+    }
+    const u = await sb.from("leagues").update({ current_season_id: data.id }).eq("id", lid);
+    say(u.error, `${name} is now the current season`);
+    S.mgr.seasonId = data.id; await refreshAdminData(lid); return true;
+  }
+  if (a === "league-create") {
+    const name = $("#nl-name").value.trim(), season = $("#nl-season").value.trim();
+    if (!name) { toast("Give the league a name."); return true; }
+    if (!season) { toast("Name the league's first season, like Fall 2026."); return true; }
+    const { data, error } = await sb.rpc("create_league", { p_name: name, p_season: season });
+    if (!say(error, `Created ${name}`)) return true;
+    S.mgr.leagueId = data; S.mgr.seasonId = null; await refreshAdminData(data); return true;
+  }
+  if (a === "league-del") {
+    if (S.ui.armed !== "league-del-" + lid) { arm("league-del-" + lid); return true; }
+    S.ui.armed = null;
+    const { error } = await sb.from("leagues").delete().eq("id", lid);
+    if (!say(error, "League deleted")) return true;
+    await loadAdminTeams();
+    S.mgr.leagueId = S.adminLeagues[0]?.id || null; S.mgr.seasonId = null;
+    if (S.leagueId === lid) { const next = S.adminTeams[0]; if (next) await loadTeam(next.id); else { if (chan) { sb.removeChannel(chan); chan = null; } S.teamId = null; S.seasons = {}; S.matches = {}; } }
+    await refreshAdminData(S.mgr.leagueId); return true;
   }
   if (a === "adm-pw-open") { S.ui.pwFor = S.ui.pwFor === id ? null : id; render(); setTimeout(() => $("#pw-" + id)?.focus(), 0); return true; }
   if (a === "adm-pw-save") {
     const p = $("#pw-" + id).value; if (p.length < 8) { toast("Passwords need at least 8 characters."); return true; }
-    if (await rpc("reset_admin_password", { p_user: id, p_password: p }, "Password reset. Share it with the admin.")) { S.ui.pwFor = null; render(); }
+    const { error } = await sb.rpc("reset_admin_password", { p_user: id, p_password: p });
+    if (say(error, "Password reset. Share it with the admin.")) { S.ui.pwFor = null; render(); }
     return true;
   }
   if (a === "adm-rm") {
     if (S.ui.armed !== "adm-rm-" + id) { arm("adm-rm-" + id); return true; }
     S.ui.armed = null;
-    if (await rpc("remove_admin", { p_user: id }, "Admin removed")) { S.leagueAdmins = null; render(); }
+    const { error } = await sb.rpc("remove_admin", { p_user: id });
+    if (say(error, "Admin removed")) { S.leagueAdmins = null; render(); }
     return true;
   }
   if (a === "adm-add") {
@@ -1132,8 +1302,9 @@ async function leagueAction(a, b) {
     const r = await tmp.auth.signUp({ email: toEmail(u), password: p });
     if (r.error) { toast(/registered|exists/i.test(errMsg(r.error)) ? "That email already has an account." : errMsg(r.error)); return true; }
     if (!r.data.user?.id || !r.data.user.identities?.length) { toast("That email already has an account."); return true; }
-    const [rl, team] = role.split(":");
-    if (await rpc("add_admin", { p_user: r.data.user.id, p_username: u, p_role: rl, p_team: team || null }, `Added ${u}`)) { S.leagueAdmins = null; render(); }
+    const [rl, ref] = role.split(":");
+    const { error } = await sb.rpc("add_admin", { p_user: r.data.user.id, p_username: u, p_role: rl, p_league: rl === "league" ? ref : null, p_team: rl === "team" ? ref : null });
+    if (say(error, `Added ${u}`)) { S.leagueAdmins = null; render(); }
     return true;
   }
   if (a === "my-pass") {
@@ -1145,10 +1316,22 @@ async function leagueAction(a, b) {
   return false;
 }
 async function changeAdminRole(sel) {
-  const id = sel.dataset.id, [rl, team] = sel.value.split(":");
-  const { error } = await sb.rpc("update_admin", { p_user: id, p_role: rl, p_team: team || null });
-  if (error) toast(errMsg(error)); else toast("Role updated");
+  const [rl, ref] = sel.value.split(":");
+  const { error } = await sb.rpc("update_admin", { p_user: sel.dataset.id, p_role: rl, p_league: rl === "league" ? ref : null, p_team: rl === "team" ? ref : null });
+  toast(error ? errMsg(error) : "Role updated");
   S.leagueAdmins = null; render();
+}
+let leagueNameTimer = null;
+function saveLeagueName(v) {
+  clearTimeout(leagueNameTimer);
+  leagueNameTimer = setTimeout(async () => {
+    const name = v.trim(); if (!name) return;
+    const { error } = await sb.from("leagues").update({ name }).eq("id", S.mgr.leagueId);
+    if (error) return toast(errMsg(error));
+    if (S.mgr.data?.league) S.mgr.data.league.name = name;
+    const l = (S.adminLeagues || []).find(x => x.id === S.mgr.leagueId); if (l) l.name = name;
+    if (S.league && S.leagueId === S.mgr.leagueId) S.league.name = name;
+  }, 600);
 }
 
 /* ---------- actions ---------- */
@@ -1161,7 +1344,7 @@ document.addEventListener("click", e => {
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
   if (a === "sign-out") { signOut(); return; }
-  if (/^(team-|adm-|my-pass)/.test(a)) { if (a === "my-pass" || S.role === "league") leagueAction(a, b); return; }
+  if (/^(team-|adm-|my-pass$|season-(view|current|del|add)$|league-(create|del)$)/.test(a)) { if (a === "my-pass" || isLeagueRole()) leagueAction(a, b); return; }
   if (a === "pin-set") {
     const pin = $("#new-pin").value.trim(); if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return; }
     if (S.ui.armed !== "pin-set") { arm("pin-set"); setTimeout(() => { const el = $("#new-pin"); if (el) el.value = pin; }, 0); return; }
@@ -1213,7 +1396,7 @@ document.addEventListener("click", e => {
   if (a === "unlock-cancel") { S.ui.unlock = null; render(); return; }
   if (a === "unlock-confirm") { const id = S.view.matchId, m = S.matches[id]; if (!m || S.ui.unlock?.id !== id || S.ui.unlock.step !== 2) return; m.locked = false; delete m.lockedAt; S.ui.unlock = null; persist("matches", id); render(); toast("Match unlocked"); return; }
   if (a === "rules-clear") { S.ui.draft = null; S.ui.armed = null; const f = $("#rules-file"); if (f) f.value = ""; render(); return; }
-  if (a === "rules-post" && S.role !== "league") return;
+  if (a === "rules-post" && !canLeague(S.leagueId)) return;
   if (a === "rules-post") {
     const text = (S.ui.draft?.text || "").trim(); if (!text) return;
     if (text.length > 200000) { toast("That's too long to post. Trim it under 200,000 characters."); return; }
@@ -1237,21 +1420,10 @@ document.addEventListener("click", e => {
     const games = randomLineup(m); if (!games) { toast(m.roster?.length < 4 ? "Need at least 4 players present to build a lineup." : "Couldn't find a lineup that fits the rules. Check who's present."); render(); return; }
     editMatch(x => { x.games = games; }); toast("Pairings drawn"); return;
   }
-  if (a === "add-season") {
-    const name = $("#new-season").value.trim(); if (!name) { toast("Give the season a name first."); $("#new-season").focus(); return; }
-    const from = S.seasons[$("#copy-from").value], id = uid();
-    S.seasons[id] = { name, created: Date.now(), players: from ? activePlayers(from).map(p => ({ id: p.id, name: p.name })) : [] };
-    persist("seasons", id);
-    if (!S.team.activeSeasonId || !S.seasons[S.team.activeSeasonId]) { S.team.activeSeasonId = id; persist("config", "team"); }
-    S.ui.openSeason = id; render(); toast(`Added ${name}`); return;
-  }
-  if (a === "set-current") { S.team.activeSeasonId = b.dataset.id; S.view.seasonId = null; persist("config", "team"); render(); return; }
-  if (a === "rm-season") {
-    const id = b.dataset.id; if (!arm("season-" + id)) return;
-    for (const [mid, m] of Object.entries(S.matches)) if (m.seasonId === id) { delete S.matches[mid]; persist("matches", mid); }
-    delete S.seasons[id]; persist("seasons", id);
-    if (S.team.activeSeasonId === id) { S.team.activeSeasonId = seasonList()[0]?.id || ""; persist("config", "team"); }
-    S.ui.armed = null; render(); toast("Season deleted"); return;
+  if (a === "copy-roster") {
+    const from = S.seasons[b.dataset.from]; if (!from) return;
+    editSeason(b.dataset.id, s => { s.players = activePlayers(from).slice(0, MAX_ROSTER).map(p => ({ id: p.id, name: p.name })); });
+    toast(`Copied ${activePlayers(S.seasons[b.dataset.id]).length} players`); return;
   }
   if (a === "add-player") {
     const inp = $("#np-" + b.dataset.id), name = inp.value.trim(); if (!name) { inp.focus(); return; }
@@ -1269,6 +1441,8 @@ document.addEventListener("change", e => {
   if (t.id === "team-pick") { try { localStorage.setItem("ss-admin-team", t.value); } catch (x) {} loadTeam(t.value); return; }
   if (t.dataset.act === "adm-role") { changeAdminRole(t); return; }
   if (t.id === "gate-team") { S.gate.teamId = t.value; return; }
+  if (t.id === "gate-league") { S.gate.leagueId = t.value; S.gate.teamId = ""; try { localStorage.setItem("ss-last-league", t.value); } catch (x) {} refreshGateTeams().then(render); return; }
+  if (t.id === "mgr-league") { S.mgr.leagueId = t.value; S.mgr.seasonId = null; S.mgr.data = null; render(); return; }
   if (!S.canWrite) return;
   if (t.dataset.act === "player") { editMatch(m => { m.games[+t.dataset.g].p[+t.dataset.s] = t.value; m.names ||= {}; if (t.value) m.names[t.value] = pName(m.seasonId, t.value, m); }); return; }
   if (t.dataset.act === "roster") { editMatch(m => { const id = t.dataset.id; m.roster = t.checked ? [...new Set([...(m.roster || []), id])] : (m.roster || []).filter(x => x !== id); }); return; }
@@ -1279,12 +1453,12 @@ document.addEventListener("change", e => {
 
 document.addEventListener("input", e => {
   const t = e.target, f = t.dataset.field; if (!f || !S.canWrite) return;
+  if (f === "league-name") { saveLeagueName(t.value); return; }
   if (f === "rules-draft") { S.ui.draft = { text: t.value, fileName: S.ui.draft?.fileName || "" }; const btn = $('[data-act="rules-post"]'); if (btn) btn.disabled = !t.value.trim(); return; }
   if ((f === "opponent" || f === "opp") && S.matches[S.view.matchId]?.locked) return;
   if (f === "opponent") { const m = S.matches[S.view.matchId]; m.opponent = t.value; persist("matches", S.view.matchId); }
   else if (f === "opp") { const m = S.matches[S.view.matchId], gm = m.games[+t.dataset.g]; (gm.opp ||= ["", ""])[+t.dataset.s] = t.value; persist("matches", S.view.matchId); }
   else if (f === "team-name") { S.team.name = t.value; persist("config", "team"); }
-  else if (f === "season-name") { S.seasons[t.dataset.id].name = t.value; persist("seasons", t.dataset.id); }
   else if (f === "player-name") { const p = S.seasons[t.dataset.id].players.find(x => x.id === t.dataset.p); if (p) p.name = t.value; persist("seasons", t.dataset.id); }
 });
 document.addEventListener("focusout", e => { if (e.target.dataset?.field && e.target.type === "text") { clearTimeout(window._fo); window._fo = setTimeout(render, 300); } });
@@ -1293,7 +1467,6 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && S.ui.modal) { S.ui.modal = null; renderLayer(); }
   if (e.key === "Enter" && e.target.dataset?.enter === "add-player") $(`[data-act="add-player"][data-id="${e.target.dataset.id}"]`)?.click();
   if (e.key === "Enter" && e.target.dataset?.enter === "add-sub") $('[data-act="add-sub"]')?.click();
-  if (e.key === "Enter" && e.target.id === "new-season") $('[data-act="add-season"]')?.click();
 });
 
 function loadScript(src) { return new Promise((ok, no) => { if (document.querySelector(`script[src="${src}"]`)) return ok(); const el = document.createElement("script"); el.src = src; el.onload = ok; el.onerror = no; document.head.append(el); }); }

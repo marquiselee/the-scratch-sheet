@@ -1,0 +1,532 @@
+-- The Scratch Sheet — migration 003: leagues and seasons.
+-- Run once in Supabase → SQL Editor → New query → Run, on a database set up with the earlier schema.
+-- Keeps everything: your teams (with PINs), seasons, rosters, matches, scratches, rules and admins.
+-- What changes:
+--   • Your existing teams move into one league called "My League" (rename it on the League tab).
+--   • Each team season becomes a league season (same-named seasons across teams are merged), and the
+--     season your teams were using becomes the league's current season.
+--   • Your league admin account becomes the Owner (runs every league).
+--   • Players will need to enter their team PIN again.
+
+begin;
+
+-- 1. Copy the current data aside
+drop schema if exists ss_backup cascade;
+create schema ss_backup;
+create table ss_backup.league   as select * from public.league;
+create table ss_backup.teams    as select * from public.teams;
+create table ss_backup.pins     as select * from public.team_pins;
+create table ss_backup.admins   as select * from public.admins;
+create table ss_backup.seasons  as select * from public.seasons;
+create table ss_backup.matches  as select * from public.matches;
+
+-- 2. Rebuild the schema (v2)
+-- The Scratch Sheet — Supabase schema (v2: leagues and seasons)
+-- New project: paste this whole file into Supabase → SQL Editor → New query → Run.
+-- Existing project with data: run supabase/migrations/003_leagues_and_seasons.sql instead (it keeps your data).
+-- Re-running this file on its own drops and recreates the app's tables (and their data).
+--
+-- Structure
+--   League  → has seasons (one marked current), its own rulebook, and teams.
+--   Season  → a league season; season_teams lists which teams play in it (teams can join or drop out).
+--   Team    → carries over between seasons (name, PIN, match history); has one roster per season.
+--
+-- Roles (all enforced here by row-level security, not by the web page)
+--   Owner        : email + password. Runs every league: creates leagues, appoints league admins.
+--   League admin : email + password. One league: seasons, teams, team PINs, rules, team admins.
+--   Team admin   : email + password. One team: rosters, team PIN, matches (incl. unlock/delete).
+--   Team member  : anonymous session that unlocks one team with its 4-digit PIN. Reads the team,
+--                  creates/edits matches, logs scratches. Cannot delete or unlock matches or edit rosters.
+
+create extension if not exists pgcrypto with schema extensions;
+
+drop table if exists public.season_teams, public.rosters, public.team_pins, public.pin_attempts, public.memberships,
+  public.matches, public.seasons, public.admins, public.teams, public.league_seasons, public.leagues, public.league cascade;
+
+-- functions from v1 whose signatures changed
+drop function if exists public.is_league_admin() cascade;
+drop function if exists public.claim_league_admin(text) cascade;
+drop function if exists public.create_team(text, text) cascade;
+drop function if exists public.add_admin(uuid, text, text, uuid) cascade;
+drop function if exists public.update_admin(uuid, text, uuid) cascade;
+drop function if exists public.list_teams() cascade;
+
+-- ---------- tables ----------
+create table public.leagues (
+  id                uuid primary key default gen_random_uuid(),
+  name              text not null check (length(trim(name)) between 1 and 80),
+  current_season_id text,
+  rules_text        text not null default '',
+  rules_file        text not null default '',
+  rules_updated     timestamptz,
+  created_at        timestamptz not null default now()
+);
+
+create table public.league_seasons (
+  id         text primary key default gen_random_uuid()::text check (id ~ '^[A-Za-z0-9_-]{4,64}$'),
+  league_id  uuid not null references public.leagues (id) on delete cascade,
+  name       text not null check (length(trim(name)) between 1 and 60),
+  created_at timestamptz not null default now()
+);
+create index on public.league_seasons (league_id);
+alter table public.leagues add constraint leagues_current_season_fk
+  foreign key (current_season_id) references public.league_seasons (id) on delete set null;
+
+create table public.teams (
+  id         uuid primary key default gen_random_uuid(),
+  league_id  uuid not null references public.leagues (id) on delete cascade,
+  name       text not null check (length(trim(name)) between 1 and 80),
+  created_at timestamptz not null default now()
+);
+create index on public.teams (league_id);
+
+create table public.season_teams (
+  season_id text not null references public.league_seasons (id) on delete cascade,
+  team_id   uuid not null references public.teams (id) on delete cascade,
+  primary key (season_id, team_id)
+);
+
+-- PIN hashes live in their own table that no client can read (not even via live updates)
+create table public.team_pins (
+  team_id  uuid primary key references public.teams (id) on delete cascade,
+  pin_hash text not null
+);
+
+create table public.admins (
+  user_id    uuid primary key references auth.users (id) on delete cascade,
+  username   text not null unique check (username ~* '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' and length(username) <= 254), -- sign-in email
+  role       text not null check (role in ('owner', 'league', 'team')),
+  league_id  uuid references public.leagues (id) on delete cascade,
+  team_id    uuid references public.teams (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  check ((role = 'owner') or (role = 'league' and league_id is not null) or (role = 'team' and team_id is not null))
+);
+
+create table public.memberships (
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  team_id    uuid not null references public.teams (id) on delete cascade,
+  expires_at timestamptz not null,
+  primary key (user_id, team_id)
+);
+
+create table public.pin_attempts (
+  id      bigserial primary key,
+  user_id uuid,
+  team_id uuid,
+  ok      boolean not null,
+  at      timestamptz not null default now()
+);
+create index on public.pin_attempts (team_id, at);
+create index on public.pin_attempts (user_id, at);
+
+-- one roster per team per league season ({ players: [...] } plus app fields)
+create table public.rosters (
+  team_id    uuid not null references public.teams (id) on delete cascade,
+  season_id  text not null references public.league_seasons (id) on delete cascade,
+  data       jsonb not null default '{}',
+  updated_at timestamptz not null default now(),
+  primary key (team_id, season_id)
+);
+
+create table public.matches (
+  id         text primary key check (id ~ '^[A-Za-z0-9_-]{4,64}$'),
+  team_id    uuid not null references public.teams (id) on delete cascade,
+  data       jsonb not null default '{}',
+  updated_at timestamptz not null default now()
+);
+create index on public.matches (team_id);
+
+-- ---------- helper checks ----------
+create or replace function public.is_owner() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from admins where user_id = auth.uid() and role = 'owner');
+$$;
+
+create or replace function public.is_league_admin(l uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from admins where user_id = auth.uid() and (role = 'owner' or (role = 'league' and league_id = l)));
+$$;
+
+create or replace function public.team_league(t uuid) returns uuid
+language sql stable security definer set search_path = public as $$
+  select league_id from teams where id = t;
+$$;
+
+create or replace function public.season_league(s text) returns uuid
+language sql stable security definer set search_path = public as $$
+  select league_id from league_seasons where id = s;
+$$;
+
+create or replace function public.is_team_admin(t uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_league_admin(public.team_league(t))
+      or exists (select 1 from admins where user_id = auth.uid() and role = 'team' and team_id = t);
+$$;
+
+create or replace function public.can_access_team(t uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_team_admin(t)
+      or exists (select 1 from memberships where user_id = auth.uid() and team_id = t and expires_at > now());
+$$;
+
+-- may the caller manage an admin with this role/scope?
+create or replace function public.can_manage_admin(p_role text, p_league uuid, p_team uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_owner()
+      or (p_role = 'team' and p_team is not null and public.is_league_admin(public.team_league(p_team)));
+$$;
+
+-- season and team must belong to the same league
+create or replace function public.season_teams_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.season_league(new.season_id) is distinct from public.team_league(new.team_id) then
+    raise exception 'That team is in a different league.';
+  end if;
+  return new;
+end $$;
+create trigger season_teams_check before insert or update on public.season_teams for each row execute function public.season_teams_check();
+
+create or replace function public.leagues_check() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.current_season_id is not null and public.season_league(new.current_season_id) is distinct from new.id then
+    raise exception 'That season belongs to a different league.';
+  end if;
+  return new;
+end $$;
+create trigger leagues_check before insert or update on public.leagues for each row execute function public.leagues_check();
+
+-- ---------- row-level security ----------
+alter table public.leagues        enable row level security;
+alter table public.league_seasons enable row level security;
+alter table public.teams          enable row level security;
+alter table public.season_teams   enable row level security;
+alter table public.team_pins      enable row level security;
+alter table public.admins         enable row level security;
+alter table public.memberships    enable row level security;
+alter table public.pin_attempts   enable row level security;
+alter table public.rosters        enable row level security;
+alter table public.matches        enable row level security;
+
+-- leagues & seasons: names and rules are public (the sign-in screen lists them)
+create policy leagues_read   on public.leagues for select using (true);
+create policy leagues_update on public.leagues for update using (public.is_league_admin(id)) with check (public.is_league_admin(id));
+create policy leagues_insert on public.leagues for insert with check (public.is_owner());
+create policy leagues_delete on public.leagues for delete using (public.is_owner());
+
+create policy seasons_read  on public.league_seasons for select using (true);
+create policy seasons_ins   on public.league_seasons for insert with check (public.is_league_admin(league_id));
+create policy seasons_upd   on public.league_seasons for update using (public.is_league_admin(league_id)) with check (public.is_league_admin(league_id));
+create policy seasons_del   on public.league_seasons for delete using (public.is_league_admin(league_id));
+
+create policy st_read on public.season_teams for select using (true);
+create policy st_ins  on public.season_teams for insert with check (public.is_league_admin(public.season_league(season_id)));
+create policy st_del  on public.season_teams for delete using (public.is_league_admin(public.season_league(season_id)));
+
+-- teams: visible to their members and admins; league admins create (via function) and delete
+create policy teams_read   on public.teams for select using (public.can_access_team(id) or public.is_league_admin(league_id));
+create policy teams_update on public.teams for update using (public.is_team_admin(id)) with check (public.is_team_admin(id));
+create policy teams_delete on public.teams for delete using (public.is_league_admin(league_id));
+
+-- admins: you see yourself plus the admins you manage
+create policy admins_read on public.admins for select using (user_id = auth.uid() or public.can_manage_admin(role, league_id, team_id));
+
+-- rosters: team members read; team admins write
+create policy rosters_read on public.rosters for select using (public.can_access_team(team_id));
+create policy rosters_ins  on public.rosters for insert with check (public.is_team_admin(team_id) and public.season_league(season_id) = public.team_league(team_id));
+create policy rosters_upd  on public.rosters for update using (public.is_team_admin(team_id)) with check (public.is_team_admin(team_id));
+create policy rosters_del  on public.rosters for delete using (public.is_team_admin(team_id));
+
+-- matches: team members read, create and edit; only team admins delete
+create policy matches_read on public.matches for select using (public.can_access_team(team_id));
+create policy matches_ins  on public.matches for insert with check (public.can_access_team(team_id));
+create policy matches_upd  on public.matches for update using (public.can_access_team(team_id)) with check (public.can_access_team(team_id));
+create policy matches_del  on public.matches for delete using (public.is_team_admin(team_id));
+
+-- column-level grants (Supabase grants everything by default; narrow it)
+revoke all on public.leagues, public.league_seasons, public.teams, public.season_teams, public.team_pins, public.admins,
+  public.memberships, public.pin_attempts, public.rosters, public.matches from anon, authenticated;
+grant select on public.leagues, public.league_seasons, public.season_teams to anon, authenticated;
+grant insert (name), update (name, current_season_id, rules_text, rules_file, rules_updated), delete on public.leagues to authenticated;
+grant insert (id, league_id, name), update (name), delete on public.league_seasons to authenticated;
+grant insert, delete on public.season_teams to authenticated;
+grant select, update (name), delete on public.teams to authenticated;
+grant select (user_id, username, role, league_id, team_id, created_at) on public.admins to authenticated;
+grant select, insert, update, delete on public.rosters, public.matches to authenticated;
+
+-- ---------- match lock guard ----------
+create or replace function public.matches_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  was_locked boolean := coalesce((old.data ->> 'locked')::boolean, false);
+  now_locked boolean := coalesce((new.data ->> 'locked')::boolean, false);
+begin
+  if tg_op = 'DELETE' then
+    -- deleting a whole league, team or season takes its matches with it, locked or not
+    if was_locked and coalesce(current_setting('scratch.cascade', true), '') <> 'on' then
+      raise exception 'This match is locked. Unlock it before deleting.';
+    end if;
+    return old;
+  end if;
+  if new.team_id <> old.team_id then raise exception 'A match cannot move to another team.'; end if;
+  if was_locked and now_locked and new.data is distinct from old.data then
+    raise exception 'This match is locked. Unlock it to make changes.';
+  end if;
+  if was_locked and not now_locked and not public.is_team_admin(old.team_id) then
+    raise exception 'Only a team admin can unlock a match.';
+  end if;
+  new.updated_at := now();
+  return new;
+end $$;
+create trigger matches_guard before update or delete on public.matches for each row execute function public.matches_guard();
+
+-- league/team/season deletes: allow their matches to go too, and remove matches from a deleted season
+create or replace function public.cascade_delete() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform set_config('scratch.cascade', 'on', true);
+  if tg_table_name = 'league_seasons' then
+    delete from matches where data ->> 'seasonId' = old.id and team_id in (select id from teams where league_id = old.league_id);
+  end if;
+  return old;
+end $$;
+create trigger leagues_cascade before delete on public.leagues for each row execute function public.cascade_delete();
+create trigger teams_cascade before delete on public.teams for each row execute function public.cascade_delete();
+create trigger seasons_cascade before delete on public.league_seasons for each row execute function public.cascade_delete();
+
+create or replace function public.touch_updated() returns trigger language plpgsql as $$
+begin new.updated_at := now(); return new; end $$;
+create trigger rosters_touch before update on public.rosters for each row execute function public.touch_updated();
+
+-- ---------- functions the app calls ----------
+create or replace function public.list_leagues() returns table (id uuid, name text)
+language sql stable security definer set search_path = public as $$
+  select id, name from leagues order by lower(name);
+$$;
+
+-- Teams playing in a league's current season (sign-in screen)
+create or replace function public.list_signin_teams(p_league uuid) returns table (id uuid, name text, has_pin boolean)
+language sql stable security definer set search_path = public as $$
+  select t.id, t.name, exists (select 1 from team_pins p where p.team_id = t.id)
+  from leagues l join season_teams st on st.season_id = l.current_season_id join teams t on t.id = st.team_id
+  where l.id = p_league order by lower(t.name);
+$$;
+
+create or replace function public.league_has_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from admins where role = 'owner');
+$$;
+
+-- First run only: the first signed-in (non-anonymous) account becomes the owner.
+create or replace function public.claim_owner(p_username text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false) then
+    raise exception 'Sign in first.';
+  end if;
+  perform pg_advisory_xact_lock(424242);
+  if exists (select 1 from admins where role = 'owner') then
+    raise exception 'The Scratch Sheet already has an owner.';
+  end if;
+  insert into admins (user_id, username, role) values (auth.uid(), lower(p_username), 'owner');
+end $$;
+
+create or replace function public.whoami() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'uid', auth.uid(),
+    'admin', (select jsonb_build_object('username', username, 'role', role, 'league_id', league_id, 'team_id', team_id) from admins where user_id = auth.uid()),
+    'teams', coalesce((select jsonb_agg(team_id) from memberships where user_id = auth.uid() and expires_at > now()), '[]'::jsonb)
+  );
+$$;
+
+-- Unlock a team with its PIN. Rate limited: 5 misses per device or 30 per team in 15 minutes.
+create or replace function public.join_team(p_team uuid, p_pin text) returns text
+language plpgsql security definer set search_path = public, extensions as $$
+declare h text; good boolean;
+begin
+  if auth.uid() is null then raise exception 'No session.'; end if;
+  if (select count(*) from pin_attempts where user_id = auth.uid() and not ok and at > now() - interval '15 minutes') >= 5
+     or (select count(*) from pin_attempts where team_id = p_team and not ok and at > now() - interval '15 minutes') >= 30 then
+    return 'locked';
+  end if;
+  if not exists (select 1 from teams where id = p_team) then return 'no_team'; end if;
+  select pin_hash into h from team_pins where team_id = p_team;
+  if h is null then return 'no_pin'; end if;
+  good := p_pin ~ '^[0-9]{4}$' and crypt(p_pin, h) = h;
+  insert into pin_attempts (user_id, team_id, ok) values (auth.uid(), p_team, good);
+  if not good then return 'wrong'; end if;
+  insert into memberships (user_id, team_id, expires_at) values (auth.uid(), p_team, now() + interval '12 hours')
+    on conflict (user_id, team_id) do update set expires_at = excluded.expires_at;
+  delete from pin_attempts where at < now() - interval '30 days';
+  return 'ok';
+end $$;
+
+create or replace function public.leave_team() returns void
+language sql security definer set search_path = public as $$
+  delete from memberships where user_id = auth.uid();
+$$;
+
+create or replace function public.set_team_pin(p_team uuid, p_pin text) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  if not public.is_team_admin(p_team) then raise exception 'Only an admin of this team can change its PIN.'; end if;
+  if p_pin !~ '^[0-9]{4}$' then raise exception 'The PIN must be exactly 4 digits.'; end if;
+  insert into team_pins (team_id, pin_hash) values (p_team, crypt(p_pin, gen_salt('bf')))
+    on conflict (team_id) do update set pin_hash = excluded.pin_hash;
+  delete from memberships where team_id = p_team;
+end $$;
+
+-- Owner: create a league with its first season (made current)
+create or replace function public.create_league(p_name text, p_season text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare l uuid; s text;
+begin
+  if not public.is_owner() then raise exception 'Only the owner can create leagues.'; end if;
+  insert into leagues (name) values (trim(p_name)) returning id into l;
+  if coalesce(trim(p_season), '') <> '' then
+    insert into league_seasons (league_id, name) values (l, trim(p_season)) returning id into s;
+    update leagues set current_season_id = s where id = l;
+  end if;
+  return l;
+end $$;
+
+-- League admin: create a team with its PIN, optionally entered in a season
+create or replace function public.create_team(p_league uuid, p_name text, p_pin text, p_season text) returns uuid
+language plpgsql security definer set search_path = public, extensions as $$
+declare t uuid;
+begin
+  if not public.is_league_admin(p_league) then raise exception 'Only an admin of this league can create teams.'; end if;
+  if p_pin !~ '^[0-9]{4}$' then raise exception 'The PIN must be exactly 4 digits.'; end if;
+  insert into teams (league_id, name) values (p_league, trim(p_name)) returning id into t;
+  insert into team_pins (team_id, pin_hash) values (t, crypt(p_pin, gen_salt('bf')));
+  if p_season is not null then insert into season_teams (season_id, team_id) values (p_season, t); end if;
+  return t;
+end $$;
+
+-- Give an existing account an admin role (the app creates the account first)
+create or replace function public.add_admin(p_user uuid, p_username text, p_role text, p_league uuid, p_team uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.can_manage_admin(p_role, p_league, p_team) then raise exception 'You can''t appoint that kind of admin.'; end if;
+  if not exists (select 1 from auth.users where id = p_user) then raise exception 'That account was not created.'; end if;
+  insert into admins (user_id, username, role, league_id, team_id)
+    values (p_user, lower(p_username), p_role, case when p_role = 'league' then p_league end, case when p_role = 'team' then p_team end);
+end $$;
+
+create or replace function public.update_admin(p_user uuid, p_role text, p_league uuid, p_team uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare a admins;
+begin
+  select * into a from admins where user_id = p_user;
+  if not found then raise exception 'That admin does not exist.'; end if;
+  if not public.can_manage_admin(a.role, a.league_id, a.team_id) or not public.can_manage_admin(p_role, p_league, p_team) then
+    raise exception 'You can''t make that change.';
+  end if;
+  if a.role = 'owner' and p_role <> 'owner' and (select count(*) from admins where role = 'owner') <= 1 then
+    raise exception 'This is the only owner. Make someone else an owner first.';
+  end if;
+  update admins set role = p_role,
+    league_id = case when p_role = 'league' then p_league end,
+    team_id = case when p_role = 'team' then p_team end
+  where user_id = p_user;
+end $$;
+
+create or replace function public.remove_admin(p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare a admins;
+begin
+  select * into a from admins where user_id = p_user;
+  if not found then raise exception 'That admin does not exist.'; end if;
+  if p_user = auth.uid() then raise exception 'You cannot remove yourself.'; end if;
+  if not public.can_manage_admin(a.role, a.league_id, a.team_id) then raise exception 'You can''t remove that admin.'; end if;
+  delete from auth.users where id = p_user;
+end $$;
+
+create or replace function public.reset_admin_password(p_user uuid, p_password text) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare a admins;
+begin
+  select * into a from admins where user_id = p_user;
+  if not found then raise exception 'That admin does not exist.'; end if;
+  if not public.can_manage_admin(a.role, a.league_id, a.team_id) then raise exception 'You can''t reset that admin''s password.'; end if;
+  if length(p_password) < 8 then raise exception 'Passwords need at least 8 characters.'; end if;
+  update auth.users set encrypted_password = crypt(p_password, gen_salt('bf')), updated_at = now() where id = p_user;
+end $$;
+
+revoke execute on all functions in schema public from public, anon;
+grant execute on function public.list_leagues(), public.list_signin_teams(uuid), public.league_has_admin() to anon, authenticated;
+grant execute on function public.claim_owner(text), public.whoami(), public.join_team(uuid, text), public.leave_team(),
+  public.set_team_pin(uuid, text), public.create_league(text, text), public.create_team(uuid, text, text, text),
+  public.add_admin(uuid, text, text, uuid, uuid), public.update_admin(uuid, text, uuid, uuid), public.remove_admin(uuid),
+  public.reset_admin_password(uuid, text), public.is_owner(), public.is_league_admin(uuid), public.is_team_admin(uuid),
+  public.can_access_team(uuid), public.team_league(uuid), public.season_league(text), public.can_manage_admin(text, uuid, uuid)
+  to authenticated;
+
+-- ---------- live updates ----------
+alter table public.matches replica identity full;
+alter table public.rosters replica identity full;
+do $$
+declare t text;
+begin
+  foreach t in array array['matches', 'rosters', 'teams', 'leagues', 'league_seasons', 'season_teams'] loop
+    begin execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then null; end;
+  end loop;
+end $$;
+
+-- 3. Put the data back in the new shape
+do $$
+declare l uuid; cur text;
+begin
+  insert into public.leagues (name, rules_text, rules_file, rules_updated)
+    select case when coalesce(nullif(trim(name), ''), 'League') = 'League' then 'My League' else trim(name) end, rules_text, rules_file, rules_updated
+    from ss_backup.league limit 1
+    returning id into l;
+  if l is null then insert into public.leagues (name) values ('My League') returning id into l; end if;
+
+  insert into public.teams (id, league_id, name, created_at) select id, l, name, created_at from ss_backup.teams;
+  insert into public.team_pins (team_id, pin_hash) select team_id, pin_hash from ss_backup.pins;
+
+  -- one league season per distinct season name; the earliest-created row's id is kept
+  create temp table season_map on commit drop as
+    select s.id as old_id,
+           first_value(s.id) over (partition by lower(trim(coalesce(s.data ->> 'name', 'Season'))) order by coalesce((s.data ->> 'created')::bigint, 0), s.id) as new_id,
+           trim(coalesce(s.data ->> 'name', 'Season')) as name,
+           coalesce((s.data ->> 'created')::bigint, 0) as created
+    from ss_backup.seasons s;
+
+  insert into public.league_seasons (id, league_id, name, created_at)
+    select distinct on (new_id) new_id, l, name, to_timestamp(nullif(created, 0) / 1000.0)
+    from season_map order by new_id, created;
+  update public.league_seasons set created_at = now() where created_at is null;
+
+  insert into public.rosters (team_id, season_id, data)
+    select distinct on (s.team_id, m.new_id) s.team_id, m.new_id, s.data - 'name' - 'created'
+    from ss_backup.seasons s join season_map m on m.old_id = s.id
+    order by s.team_id, m.new_id, (s.data ->> 'created')::bigint nulls last;
+
+  insert into public.season_teams (season_id, team_id)
+    select distinct m.new_id, s.team_id from ss_backup.seasons s join season_map m on m.old_id = s.id;
+
+  insert into public.matches (id, team_id, data, updated_at)
+    select x.id, x.team_id,
+           case when m.new_id is not null then jsonb_set(x.data, '{seasonId}', to_jsonb(m.new_id)) else x.data end,
+           x.updated_at
+    from ss_backup.matches x left join season_map m on m.old_id = x.data ->> 'seasonId';
+
+  -- current season: the one most teams had active, else the newest
+  select m.new_id into cur from ss_backup.teams t join season_map m on m.old_id = t.active_season_id
+    group by m.new_id order by count(*) desc limit 1;
+  if cur is null then select id into cur from public.league_seasons where league_id = l order by created_at desc limit 1; end if;
+  update public.leagues set current_season_id = cur where id = l;
+
+  insert into public.admins (user_id, username, role, league_id, team_id, created_at)
+    select user_id, username, case when role = 'league' then 'owner' else role end, null,
+           case when role = 'team' then team_id end, created_at
+    from ss_backup.admins;
+end $$;
+
+drop schema ss_backup cascade;
+commit;
