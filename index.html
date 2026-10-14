@@ -7,6 +7,7 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v20 2026-10-14: Stats: "Errors / game" average replaces Error %.
   v19 2026-10-14: "Exit" replaces "Leave"; scratch pop-up shows each player's running count for the game and has "Log & add another" for repeat scratches.
   v18 2026-10-14: Current match heading reads Today's Match / Next Match / Last Match; full date on the card; Log scratch stays beside each match on phones.
   v17 2026-10-14: League admins can rename seasons.
@@ -862,10 +863,10 @@ function viewStandings(sid) {
     <div class="panel"><div class="eyebrow">Games</div><div class="score"><b>${gw}–${gl}</b><span class="muted small">${gw + gl ? Math.round(gw / (gw + gl) * 100) + "% won · breaks ties in league standings" : ""}</span></div></div>
   </div>
   <section class="panel"><h3>Players</h3>
-    <div class="tbl"><table><thead><tr><th>Player</th><th>Matches</th><th>Games</th><th>W</th><th>L</th><th>Win %</th><th title="Scratches of any type">Errors</th><th title="Errors per game played">Error %</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${esc(pName(sid, r.id))}</td><td>${r.nights}</td><td>${r.gp}</td><td>${r.w}</td><td>${r.l}</td><td>${r.gp ? Math.round(r.w / r.gp * 100) + "%" : "—"}</td><td>${r.err}</td><td>${r.gp ? Math.round(r.err / r.gp * 100) + "%" : "—"}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">No players yet.</td></tr>`}
+    <div class="tbl"><table><thead><tr><th>Player</th><th>Matches</th><th>Games</th><th>W</th><th>L</th><th>Win %</th><th title="Scratches of any type">Errors</th><th title="Average errors per game played">Errors / game</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${esc(pName(sid, r.id))}</td><td>${r.nights}</td><td>${r.gp}</td><td>${r.w}</td><td>${r.l}</td><td>${r.gp ? Math.round(r.w / r.gp * 100) + "%" : "—"}</td><td>${r.err}</td><td>${r.gp ? (r.err / r.gp).toFixed(2) : "—"}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">No players yet.</td></tr>`}
     </tbody></table></div>
-    <p class="small muted" style="margin:0">Matches counts nights a player was marked as playing. Games count only games with a recorded result. Errors are scratches of any type; Error % is errors per game played, so it can pass 100% if a player averages more than one scratch a game.</p>
+    <p class="small muted" style="margin:0">Matches counts nights a player was marked as playing. Games count only games with a recorded result. Errors are scratches of any type. Errors / game is the average number of errors per game played.</p>
   </section>
   ${scratchStats(sid, ms)}
   <section class="panel"><h3>Match results</h3>
