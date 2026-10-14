@@ -1,0 +1,1299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1d5c43">
+<meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
+<title>The Scratch Sheet</title>
+<!-- Changelog
+  v14 2026-10-14: Moved to GitHub Pages + Supabase. League with many teams; team members sign in per session with team + 4-digit PIN;
+                  league and team admins sign in with username + password; League tab for teams, PINs and admins; all permissions enforced by the database.
+  v13 2026-10-14: Renamed app from Rack Sheet to The Scratch Sheet.
+  v12 2026-10-14: Edit or correct a logged scratch (tap it, or the pencil) — change game, player or type, or delete it.
+  v11 2026-10-14: Stats match tile shows upcoming match count instead of in-progress.
+  v10 2026-10-14: Errors and Error % columns in the Stats players table (error = any scratch).
+  v9 2026-10-14: Phone layout: bottom tab bar, larger tap targets, 16px inputs, bottom-sheet pop-ups.
+  v8 2026-10-14: Log scratch button on each match in the Matches list.
+  v7 2026-10-14: Scratch tracking. "Log scratch" on Current Match (game, player, type: table / pocket / off table / 8-ball); scratch log on match page; per-player scratch table on Stats.
+  v6 2026-10-14: Current Match shows only today's match or the closest upcoming one; dropped "In progress" label there.
+  v5 2026-10-14: Current Match section at the top of the Matches tab (today's match, else next upcoming, else latest unfinished).
+  v4 2026-10-14: Standings tab renamed Stats; Rules tab pinned to the right.
+  v3 2026-10-14: Applied OLS 8-Ball Doubles rules (10/7/2025): no repeat partners, everyone present must play, 4-player game-5 forfeit, <4 match forfeit, subs (not in playoffs, only when <5 present), FF/NP game results and match ties, 6–10 roster limits, PDF rules upload.
+  v2 2026-10-14: Rules tab (post/overwrite league rules from .txt/.md/.docx/.html or pasted text); match lock with two-step unlock.
+  v1 2026-10-14: Matches, pairings with rule check, results, comments, standings, team admin.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: one working column (max 880px) — header band, tabs, then a list → detail flow for matches */
+:root{
+  --bg:#f2f5f0; --surface:#ffffff; --sunk:#e8ede6; --ink:#16211b; --muted:#5b6a61; --line:#d5ddd4;
+  --cloth:#1d5c43; --cloth-ink:#ffffff; --chalk:#2a78b0;
+  --win:#1d7a40; --win-bg:#e1f2e6; --loss:#b2362e; --loss-bg:#f8e3e0; --warn:#9a6a00; --warn-bg:#fbf0d3;
+  --b1:#f2c12e; --b2:#2453b8; --b3:#cf2e2e; --b4:#6a3aa6; --b5:#ef7a1a;
+  --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1612; --surface:#15201a; --sunk:#101914; --ink:#e4ece6; --muted:#91a298; --line:#283830;
+  --cloth:#4bb487; --cloth-ink:#06120c; --chalk:#68b0e3;
+  --win:#5ccb8b; --win-bg:#173324; --loss:#f07e73; --loss-bg:#3a1c19; --warn:#f0c35a; --warn-bg:#352a10;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1612; --surface:#15201a; --sunk:#101914; --ink:#e4ece6; --muted:#91a298; --line:#283830;
+  --cloth:#4bb487; --cloth-ink:#06120c; --chalk:#68b0e3;
+  --win:#5ccb8b; --win-bg:#173324; --loss:#f07e73; --loss-bg:#3a1c19; --warn:#f0c35a; --warn-bg:#352a10;
+  color-scheme:dark}
+*{box-sizing:border-box}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;min-height:100vh}
+img{max-width:100%}
+[hidden]{display:none!important}
+.gate{max-width:440px;margin:8px auto 0;width:100%}
+.gate-seg{display:grid!important;grid-template-columns:1fr 1fr}
+.gate-seg button{min-height:44px;font-size:14px}
+.gate-seg button[aria-pressed="true"]{background:var(--cloth);color:var(--cloth-ink)}
+input[type=password]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
+input.pin{font:600 22px/1 var(--f-mono);letter-spacing:.5em;text-align:center}
+input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
+.who-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.who-chip b{color:var(--ink);font-weight:600}
+.lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.lrow:first-of-type{border-top:0}
+@media (max-width:640px){.lrow{grid-template-columns:1fr}.lrow .row{justify-content:flex-start}}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f-body)}
+.wrap{max-width:880px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header{padding-block:20px 0}
+.brand{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{font:800 clamp(30px,6vw,42px)/1 var(--f-display);letter-spacing:.01em;margin:0;text-transform:uppercase;text-wrap:balance}
+.eyebrow{font:500 11px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.record{font:600 14px var(--f-body);font-variant-numeric:tabular-nums;color:var(--muted)}
+.record b{color:var(--ink)}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-top:16px;overflow-x:auto}
+nav button{background:none;border:0;border-bottom:3px solid transparent;padding:10px 12px;font:600 14px var(--f-body);color:var(--muted);cursor:pointer;white-space:nowrap}
+nav button.push{margin-left:auto}
+nav button[aria-current="true"]{color:var(--ink);border-bottom-color:var(--cloth)}
+main{padding-block:20px 60px;display:grid;gap:20px}
+h2{font:700 24px/1.1 var(--f-display);text-transform:uppercase;letter-spacing:.02em;margin:0}
+h3{font:600 15px var(--f-body);margin:0}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.spread{justify-content:space-between}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:14px;min-width:0}
+label.f{display:grid;gap:4px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.02em}
+input[type=text],input[type=date],select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
+textarea{min-height:120px;resize:vertical}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--chalk);outline-offset:2px}
+.btn{font:600 14px var(--f-body);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:8px 14px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--cloth);border-color:var(--cloth);color:var(--cloth-ink)}
+.btn.danger{color:var(--loss)}
+.btn.danger.armed{background:var(--loss);border-color:var(--loss);color:#fff}
+.btn.ghost{border-color:transparent;background:none}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.icon{width:34px;height:34px;padding:0;display:inline-grid;place-items:center;font-size:15px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+/* pool balls */
+.ball{--b:var(--b1);width:34px;height:34px;border-radius:50%;background:var(--b);display:grid;place-items:center;flex:none;box-shadow:inset -3px -4px 0 rgba(0,0,0,.18)}
+.ball span{width:18px;height:18px;border-radius:50%;background:#fff;color:#111;display:grid;place-items:center;font:700 11px/1 var(--f-mono)}
+.ball.g2{--b:var(--b2)}.ball.g3{--b:var(--b3)}.ball.g4{--b:var(--b4)}.ball.g5{--b:var(--b5)}
+/* match list */
+.mlist{display:grid;gap:8px}
+.mcard{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
+.mcard:hover{border-color:var(--cloth)}
+.mrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}
+.scr-btn{border-radius:var(--r)}
+@media (max-width:480px){.mrow{grid-template-columns:1fr}.scr-btn{justify-self:end;padding:6px 12px}}
+.mdate{font:500 12px/1.2 var(--f-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em;min-width:54px;text-align:center}
+.mdate b{display:block;font:700 22px/1 var(--f-display);color:var(--ink)}
+.mtitle{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.pill{font:600 12px/1 var(--f-mono);padding:6px 9px;border-radius:999px;font-variant-numeric:tabular-nums;white-space:nowrap;background:var(--sunk);color:var(--muted)}
+.pill.W{background:var(--win-bg);color:var(--win)}.pill.L{background:var(--loss-bg);color:var(--loss)}
+.tag{font:500 11px/1 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--chalk)}
+/* roster chips */
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:6px 12px;cursor:pointer;font-weight:500;user-select:none}
+.chip input{accent-color:var(--cloth);margin:0}
+.chip.on{border-color:var(--cloth);background:color-mix(in srgb,var(--cloth) 12%,var(--surface))}
+/* games */
+.games{display:grid;gap:10px}
+.game{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px 12px;align-items:start;border:1px solid var(--line);border-radius:var(--r);padding:12px;background:var(--bg)}
+.game.bad{border-color:var(--loss);box-shadow:inset 3px 0 0 var(--loss)}
+.gmain{display:grid;gap:8px;min-width:0}
+.pair{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;align-items:center}
+.vs{font:500 11px var(--f-mono);color:var(--muted);text-transform:uppercase}
+.opp input{font-size:13px;padding:6px 9px}
+.gside{display:grid;gap:6px;justify-items:end}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--surface);font:700 13px var(--f-mono);padding:7px 11px;cursor:pointer;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.W[aria-pressed="true"]{background:var(--win);color:#fff}
+.seg button.L[aria-pressed="true"]{background:var(--loss);color:#fff}
+.seg button.X[aria-pressed="true"]{background:var(--muted);color:var(--surface)}
+.chip .x{border:0;background:none;color:var(--muted);cursor:pointer;padding:0 0 0 2px;font-size:15px;line-height:1}
+.legend{font-size:12px;color:var(--muted)}
+.tools{display:flex;gap:4px}
+.has-note{color:var(--chalk)}
+.notes{display:grid;gap:6px;font-size:14px}
+.notes div{padding:8px 12px;border-radius:8px}
+.notes .e{background:var(--loss-bg);color:var(--loss)}
+.notes .n{background:var(--warn-bg);color:var(--warn)}
+.notes .ok{background:var(--win-bg);color:var(--win)}
+.score{display:flex;align-items:baseline;gap:10px;font-variant-numeric:tabular-nums}
+.score b{font:800 40px/1 var(--f-display)}
+.score .res{font:700 13px var(--f-mono);letter-spacing:.08em;text-transform:uppercase}
+.res.W{color:var(--win)}.res.L{color:var(--loss)}
+.comment-preview{font-size:14px;white-space:pre-wrap;color:var(--muted);border-left:3px solid var(--line);padding-left:10px}
+/* tables */
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font:500 11px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+/* admin */
+.season{border:1px solid var(--line);border-radius:var(--r);background:var(--bg);padding:12px;display:grid;gap:12px}
+.season.current{border-color:var(--cloth)}
+.plist{display:grid;gap:6px}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.cur{border:1px solid var(--cloth);border-radius:var(--r);background:var(--surface);padding:16px;display:grid;gap:14px}
+.cur-head{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start}
+.cur-games{display:grid;gap:6px}
+.cur-game{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;font-size:14px}
+.cur-game .ball{width:26px;height:26px}.cur-game .ball span{width:14px;height:14px;font-size:9px}
+.cur-game .who{min-width:0;overflow-wrap:anywhere}
+.cur-game .opp{color:var(--muted);font-size:12px}
+.cur-scr{display:flex;flex-wrap:wrap;gap:6px}
+.scr{display:inline-flex;align-items:center;gap:6px;font-size:12px;border:1px solid var(--line);border-radius:999px;padding:4px 6px 4px 10px;background:var(--bg)}
+.scr b{font-weight:600}
+.scr-edit{border:0;background:none;font:inherit;color:inherit;cursor:pointer;padding:0;text-align:left}
+.scr-edit .pen{color:var(--chalk);margin-left:2px}
+.scr-edit:hover b{text-decoration:underline}
+.scr .x{border:0;background:none;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 2px}
+.opts{display:grid;gap:8px}
+.opt{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:10px 12px;cursor:pointer;background:var(--bg);text-align:left;font:inherit;color:inherit;width:100%}
+.opt small{grid-column:2;color:var(--muted);font-size:12px}
+.opt[aria-pressed="true"]{border-color:var(--cloth);background:color-mix(in srgb,var(--cloth) 12%,var(--surface))}
+.opt .dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--muted)}
+.opt[aria-pressed="true"] .dot{border-color:var(--cloth);background:var(--cloth)}
+.gpick{display:flex;flex-wrap:wrap;gap:6px}
+.gpick button{border:2px solid transparent;border-radius:50%;padding:2px;background:none;cursor:pointer}
+.gpick button[aria-pressed="true"]{border-color:var(--ink)}
+.pill.T{background:var(--warn-bg);color:var(--warn)}
+.empty{text-align:center;padding:36px 16px;display:grid;gap:12px;justify-items:center}
+.empty p{max-width:44ch;margin:0;color:var(--muted)}
+.banner{font-size:13px;padding:8px 12px;border-radius:8px;background:var(--warn-bg);color:var(--warn)}
+/* modal + toast */
+.scrim{position:fixed;inset:0;background:rgba(5,12,8,.5);display:grid;place-items:center;padding:16px;z-index:10}
+.modal{background:var(--surface);border-radius:12px;padding:18px;width:min(520px,100%);display:grid;gap:12px;border:1px solid var(--line)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-size:14px;z-index:20;max-width:calc(100% - 32px)}
+.ro .w{pointer-events:none;opacity:.6}
+fieldset.lockable{border:0;margin:0;padding:0;min-width:0;display:grid;gap:20px}
+fieldset.lockable:disabled .panel{opacity:.82}
+fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
+.lockbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;background:var(--surface)}
+.lockbar.on{border-color:var(--chalk);background:color-mix(in srgb,var(--chalk) 10%,var(--surface))}
+.lockbar.warn{border-color:var(--loss);background:var(--loss-bg)}
+.lockbar .msg{display:grid;gap:2px;min-width:0;flex:1 1 260px}
+.lock-ico{display:inline-block;width:12px;height:10px;border:2px solid currentColor;border-radius:2px;position:relative;margin-right:6px;top:1px}
+.lock-ico::before{content:"";position:absolute;left:1px;top:-8px;width:6px;height:6px;border:2px solid currentColor;border-bottom:0;border-radius:5px 5px 0 0}
+.rules{max-width:70ch;display:grid;gap:12px;font-size:15px;line-height:1.6}
+.rules p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.rules h3{font:700 20px/1.2 var(--f-display);text-transform:uppercase;letter-spacing:.02em;margin-top:8px}
+.rules ul{margin:0;padding-left:1.2em}
+@media (max-width:560px){
+  .game{grid-template-columns:auto minmax(0,1fr)}
+  .gside{grid-column:1/-1;grid-auto-flow:column;justify-content:space-between;align-items:center}
+  .pair{grid-template-columns:1fr}
+  .vs{display:none}
+}
+/* phones: bottom tab bar, 44px+ tap targets, 16px inputs (no iOS zoom), bottom-sheet pop-ups */
+@media (max-width:640px){
+  body{font-size:16px;-webkit-tap-highlight-color:transparent}
+  header{padding-block:14px 0}
+  .brand{align-items:flex-start}
+  .brand > .row{width:100%;justify-content:space-between}
+  #season-pick{flex:1;width:auto!important}
+  nav{position:fixed;left:0;right:0;bottom:0;z-index:5;margin:0;background:var(--surface);border-top:1px solid var(--line);border-bottom:0;display:grid;grid-template-columns:repeat(var(--n,4),1fr);gap:0;overflow:visible;
+    padding:0 max(4px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0px) max(4px,env(safe-area-inset-left,0px))}
+  nav button{border-bottom:0;border-top:3px solid transparent;padding:12px 2px;font-size:13px;min-height:56px}
+  nav button[aria-current="true"]{border-top-color:var(--cloth);border-bottom:0}
+  nav button.push{margin-left:0}
+  main{padding-block:16px calc(96px + env(safe-area-inset-bottom,0px));gap:16px}
+  .toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+  input[type=text],input[type=date],select,textarea{font-size:16px;padding:10px 12px}
+  .btn{min-height:44px}
+  .btn.small,.btn.ghost.small{min-height:40px}
+  .icon{width:44px;height:44px;font-size:17px}
+  .panel{padding:14px}
+  .chips{gap:8px}
+  .chip{min-height:44px;padding:8px 14px}
+  .chip .x{font-size:20px;padding:0 4px}
+  .game{padding:12px 10px}
+  .gside{grid-auto-flow:row;justify-content:stretch;justify-items:stretch;gap:8px}
+  .gside .tools{justify-content:space-between}
+  .seg{display:grid;grid-template-columns:repeat(4,1fr)}
+  .seg button{min-height:44px;padding:0 6px;font-size:14px}
+  .mcard{padding:12px}
+  .scr{padding:6px 6px 6px 10px;font-size:13px}
+  .scr .x{font-size:20px;padding:0 6px}
+  th,td{padding:9px 8px;font-size:14px}
+  .score b{font-size:34px}
+  .lockbar .row{width:100%}
+  .lockbar .row .btn{flex:1}
+  .scrim{place-items:end center;padding:0}
+  .modal{width:100%;border-radius:16px 16px 0 0;max-height:88vh;overflow-y:auto;border-bottom:0;
+    padding:18px max(16px,env(safe-area-inset-right,0px)) calc(18px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+  .modal .row.spread .btn{flex:1}
+  .opt{min-height:52px}
+  .gpick{justify-content:space-between}
+  .gpick .ball{width:40px;height:40px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.9/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+
+<div id="app" class="wrap"><header><div class="eyebrow">The Scratch Sheet</div><h1>Loading…</h1></header></div>
+<noscript><p style="padding:16px">The Scratch Sheet needs JavaScript turned on.</p></noscript>
+<div id="layer"></div>
+
+<script>
+const GAMES = 5;
+const S = {
+  team: { name: "", activeSeasonId: "" },
+  seasons: {}, matches: {},
+  phase: "boot", role: null, username: "", uid: null, teamId: null, teams: null, hasLeague: true, leagueAdmins: null,
+  gate: { tab: "team", teamId: "", msg: "", ok: false, busy: false },
+  canWrite: true, loaded: { team:false, seasons:false, matches:false, rules:false },
+  rules: { text: "", fileName: "", updated: 0 },
+  view: { tab: "matches", matchId: null, seasonId: null },
+  ui: { armed: null, modal: null, openSeason: null, unlock: null, draft: null, pinFor: null, pwFor: null },
+};
+const isAdmin = () => S.role === "league" || S.role === "team";
+
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const clone = o => JSON.parse(JSON.stringify(o));
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const ord = n => n + (["th","st","nd","rd"][(n % 100 - 20) % 10] || ["th","st","nd","rd"][n % 100] || "th");
+const todayISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const fmtDay = iso => { const d = new Date(iso + "T12:00"); return isNaN(d) ? ["—",""] : [d.toLocaleDateString(undefined,{month:"short"}), d.getDate(), d.toLocaleDateString(undefined,{weekday:"short", year:"numeric"})]; };
+const blankGame = () => ({ p: ["", ""], opp: ["", ""], result: "", comment: "" });
+function toast(msg) { document.querySelectorAll(".toast").forEach(x => x.remove()); const t = document.createElement("div"); t.className = "toast"; t.textContent = msg; document.body.append(t); setTimeout(() => t.remove(), 2800); }
+
+const seasonList = () => Object.entries(S.seasons).map(([id, s]) => ({ id, ...s })).sort((a, b) => (b.created || 0) - (a.created || 0));
+function curSeasonId() {
+  const v = S.view.seasonId; if (v && S.seasons[v]) return v;
+  if (S.team.activeSeasonId && S.seasons[S.team.activeSeasonId]) return S.team.activeSeasonId;
+  return seasonList()[0]?.id || "";
+}
+const activePlayers = s => (s?.players || []).filter(p => !p.removed);
+function pName(seasonId, id, m) {
+  const p = (S.seasons[seasonId]?.players || []).find(x => x.id === id);
+  if (p) return p.name;
+  const sub = (m?.subs || []).find(x => x.id === id);
+  return sub ? sub.name + " (sub)" : (m?.names?.[id] || "Former player");
+}
+const seasonMatches = sid => Object.entries(S.matches).map(([id, m]) => ({ id, ...m })).filter(m => m.seasonId === sid)
+  .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0));
+function matchNo(m) {
+  const same = Object.entries(S.matches).filter(([, x]) => x.seasonId === m.seasonId && x.date === m.date).sort((a, b) => (a[1].created || 0) - (b[1].created || 0));
+  return { n: same.findIndex(([id]) => id === (m.id || S.view.matchId)) + 1, of: same.length };
+}
+function score(m) {
+  const w = m.games.filter(g => g.result === "W").length, l = m.games.filter(g => g.result === "L" || g.result === "FF").length;
+  const done = m.games.every(g => g.result);
+  let res = "";
+  if (m.forfeit) res = m.forfeit === "us" ? "L" : "W";
+  else if (w >= 3) res = "W"; else if (l >= 3) res = "L";
+  else if (done) res = w > l ? "W" : l > w ? "L" : "T"; // III.B.2: time ran out
+  return { w, l, res };
+}
+const SCRATCH = [
+  { k: "table", label: "Table scratch", hint: "Complete miss, bad hit or no rail" },
+  { k: "pocket", label: "Pocket scratch", hint: "Cue ball goes in a pocket" },
+  { k: "off", label: "Off-table scratch", hint: "Cue ball leaves the table" },
+  { k: "eight", label: "8-ball", hint: "Scratch on the 8 or premature 8 pocket" },
+];
+const scrLabel = k => SCRATCH.find(x => x.k === k)?.label || k;
+function defaultGame(m) { const i = m.games.findIndex(g => g.p[0] && g.p[1] && !g.result); if (i >= 0) return i; const j = m.games.map((g, k) => g.p[0] ? k : -1).filter(k => k >= 0).pop(); return j ?? 0; }
+const resLabel = r => r === "W" ? "Won" : r === "L" ? "Lost" : r === "T" ? "Tied" : "";
+
+/* ---------- league rules (OLS 8-Ball Doubles, updated 10/7/2025) ----------
+   II.A    roster 6–10 players per team
+   III.A   5 games of doubles; every present player plays at least once
+   III.A.1 / IV.A  nobody plays a 2nd game until every present player has played once
+           (odd count: a repeat player may partner the last player who hasn't played)
+   III.A.1 players arriving after everyone has played once are not eligible
+   III.B   majority of five wins; if time runs out, games played decide (a 2–2 tie is possible)
+   III.C.1 subs only when fewer than 5 players are present; no subs in playoffs
+   III.F   exactly 4 present: play games 1–4, forfeit game 5; fewer than 4: match forfeit
+   IV.A    a player can't have the same partner twice in a match
+*/
+const MAX_ROSTER = 10, MIN_ROSTER = 6;
+const isSub = (m, id) => (m.subs || []).some(s => s.id === id);
+const slotsFor = n => n === 4 ? 4 : GAMES; // games that get players
+function check(m) {
+  const errs = [], notes = [], bad = new Set();
+  const name = id => pName(m.seasonId, id, m);
+  const roster = m.roster || [], n = roster.length;
+  const regulars = roster.filter(id => !isSub(m, id)).length, subs = roster.filter(id => isSub(m, id));
+  if (m.forfeit) { notes.push(m.forfeit === "us" ? "Recorded as a forfeit by our team." : "Recorded as a forfeit by the opponent."); return { errs, notes, bad }; }
+  if (n < 4) notes.push(n === 0 ? "Mark who's present to build the lineup." : `Only ${n} player${n === 1 ? "" : "s"} present. Fewer than 4 is a match forfeit (rule III.F.1); add a sub or record the forfeit.`);
+  if (n === 4) notes.push("4 players present: play games 1–4 and forfeit game 5 (rule III.F).");
+  if (n > MAX_ROSTER) errs.push(`${n} players are marked present; a lineup can use at most ${MAX_ROSTER} (rule II.A).`);
+  if (subs.length && m.playoff) errs.push("Subs aren't allowed in playoff matches (rule III.C.1).");
+  else if (subs.length && regulars >= 5) errs.push(`Subs are only allowed when fewer than 5 team players are present (rule III.C.1). ${regulars} are present.`);
+  const count = {}; roster.forEach(id => count[id] = 0);
+  const pairs = {}, active = n >= 4 ? slotsFor(n) : GAMES;
+  let filled = true;
+  m.games.forEach((g, i) => {
+    const [a, b] = g.p, gn = i + 1;
+    if (i >= active) { if (a || b) { errs.push(`Game ${gn} is forfeited with only 4 players, so it shouldn't have players.`); bad.add(i); } return; }
+    if (!a || !b) { filled = false; if (n >= 4) notes.push(`Game ${gn} needs two players.`); }
+    if (a && a === b) { errs.push(`Game ${gn}: ${name(a)} is listed twice.`); bad.add(i); }
+    if (a && b && a !== b) {
+      const k = [a, b].sort().join("|");
+      if (k in pairs) { errs.push(`Game ${gn}: ${name(a)} and ${name(b)} already partnered in game ${pairs[k] + 1}. Partners can't repeat (rule IV.A).`); bad.add(i); }
+      else pairs[k] = i;
+    }
+    for (const p of [...new Set([a, b])].filter(Boolean)) {
+      if (!(p in count)) { errs.push(`Game ${gn}: ${name(p)} isn't marked as present.`); bad.add(i); continue; }
+      const c = count[p];
+      if (c >= 1) {
+        const behind = roster.find(q => q !== p && count[q] + ((q === a || q === b) ? 1 : 0) < c);
+        if (behind) { errs.push(`Game ${gn}: ${name(p)} would play a ${ord(c + 1)} game before ${name(behind)} has played ${c === 1 ? "once" : c + " games"} (rule IV.A).${c === 1 ? ` If ${name(behind)} arrived after everyone had played once, they aren't eligible (III.A.1), so uncheck them.` : ""}`); bad.add(i); }
+      }
+    }
+    [...new Set([a, b])].forEach(p => { if (p in count) count[p]++; });
+  });
+  if (filled && n >= 4 && n <= MAX_ROSTER) roster.filter(id => count[id] === 0).forEach(id => errs.push(`${name(id)} is present but not in any game. Every present player must play (rule III.A).`));
+  return { errs, notes, bad };
+}
+function randomLineup(m) {
+  const roster = m.roster || [], n = roster.length;
+  if (n < 4 || n > MAX_ROSTER) return null;
+  const active = slotsFor(n);
+  for (let t = 0; t < 2000; t++) {
+    let seq = [];
+    while (seq.length < active * 2) seq.push(...shuffle(roster));
+    const games = m.games.map((g, i) => i < active ? { ...g, p: [seq[i * 2], seq[i * 2 + 1]] } : { ...g, p: ["", ""], result: "FF" });
+    if (!check({ ...m, games }).errs.length) return games;
+  }
+  return null;
+}
+
+/* ---------- Supabase connection ---------- */
+const SB_URL = "https://httcvbpsrlhrfgxmeqbt.supabase.co";
+const SB_KEY = "sb_publishable_0Bg3NuYq58agSddJxfc71w_ZRJEAeoj"; // public key: safe to ship; access is enforced by the database
+const LOGIN_DOMAIN = "scratchsheet.app"; // admin usernames sign in as <username>@LOGIN_DOMAIN (no email is ever sent)
+const toEmail = u => `${String(u).trim().toLowerCase()}@${LOGIN_DOMAIN}`;
+const USERNAME_RE = /^[a-z0-9._-]{3,32}$/;
+let sb = null, chan = null;
+const errMsg = e => (e && (e.message || e.error_description)) || "Something went wrong. Check your connection and try again.";
+
+/* ---------- saving ---------- */
+const writers = {};
+function persist(coll, id) {
+  if (!S.canWrite || S.phase !== "app") return;
+  const key = coll + "/" + id, w = writers[key] ||= { timer: null, inflight: false, dirty: false };
+  clearTimeout(w.timer); w.timer = setTimeout(() => { w.timer = null; flush(coll, id); }, 450);
+}
+async function flush(coll, id) {
+  const key = coll + "/" + id, w = writers[key];
+  if (w.inflight) { w.dirty = true; return; }
+  w.inflight = true;
+  let r;
+  try {
+    if (coll === "config" && id === "team") {
+      const name = (S.team.name || "").trim();
+      r = name ? await sb.from("teams").update({ name, active_season_id: S.team.activeSeasonId || null }).eq("id", S.teamId) : { error: null };
+    } else if (coll === "config" && id === "rules") {
+      r = await sb.from("league").update({ rules_text: S.rules.text, rules_file: S.rules.fileName || "", rules_updated: S.rules.updated ? new Date(S.rules.updated).toISOString() : null }).eq("id", 1);
+    } else {
+      const data = S[coll][id];
+      r = data === undefined ? await sb.from(coll).delete().eq("id", id) : await sb.from(coll).upsert({ id, team_id: S.teamId, data: clone(data) });
+    }
+  } catch (e) { r = { error: e }; }
+  w.inflight = false;
+  if (r?.error) {
+    const m = errMsg(r.error);
+    if (/JWT|session|expired|row-level security|permission denied/i.test(m)) {
+      const who = await sb.rpc("whoami");
+      const still = who.data?.admin || (who.data?.teams || []).includes(S.teamId);
+      if (!still) return signOut(S.role === "member" ? "Your team session ended. Enter the PIN again to keep going." : "Your session ended. Sign in again.");
+    }
+    toast(m);
+    if (coll === "matches" || coll === "seasons") await refetch(coll, id);
+  }
+  if (w.dirty) { w.dirty = false; flush(coll, id); }
+}
+const busy = key => { const w = writers[key]; return w && (w.timer || w.inflight); };
+async function refetch(coll, id) {
+  const { data } = await sb.from(coll).select("id,data").eq("id", id).maybeSingle();
+  if (data) S[coll][id] = data.data; else delete S[coll][id];
+  render();
+}
+
+/* ---------- loading a team ---------- */
+const rulesFrom = r => ({ text: r?.rules_text || "", fileName: r?.rules_file || "", updated: r?.rules_updated ? Date.parse(r.rules_updated) : 0 });
+async function loadTeam(teamId) {
+  if (chan) { sb.removeChannel(chan); chan = null; }
+  S.teamId = teamId; S.seasons = {}; S.matches = {}; S.view.matchId = null;
+  S.loaded = { team: false, seasons: false, matches: false, rules: false }; render();
+  const [t, se, ma, le] = await Promise.all([
+    sb.from("teams").select("id,name,active_season_id").eq("id", teamId).maybeSingle(),
+    sb.from("seasons").select("id,data").eq("team_id", teamId),
+    sb.from("matches").select("id,data").eq("team_id", teamId),
+    sb.from("league").select("rules_text,rules_file,rules_updated").eq("id", 1).maybeSingle(),
+  ]);
+  const err = t.error || se.error || ma.error || le.error;
+  if (err) { toast(errMsg(err)); }
+  if (!t.data) return signOut(S.role === "member" ? "Your team session ended. Enter the PIN again." : "That team isn't available.");
+  S.team = { name: t.data.name, activeSeasonId: t.data.active_season_id || "" };
+  (se.data || []).forEach(r => S.seasons[r.id] = r.data);
+  (ma.data || []).forEach(r => S.matches[r.id] = r.data);
+  S.rules = rulesFrom(le.data);
+  try { S.view.seasonId = localStorage.getItem("ss-season-" + teamId) || null; } catch (e) {}
+  S.loaded = { team: true, seasons: true, matches: true, rules: true };
+  const row = coll => p => {
+    const id = p.new?.id || p.old?.id; if (!id || busy(coll + "/" + id)) return;
+    if (p.eventType === "DELETE") delete S[coll][id]; else if (p.new.team_id === S.teamId) S[coll][id] = p.new.data;
+    render();
+  };
+  chan = sb.channel("team-" + teamId)
+    .on("postgres_changes", { event: "*", schema: "public", table: "matches", filter: `team_id=eq.${teamId}` }, row("matches"))
+    .on("postgres_changes", { event: "*", schema: "public", table: "seasons", filter: `team_id=eq.${teamId}` }, row("seasons"))
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "matches" }, row("matches"))
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "seasons" }, row("seasons"))
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "teams", filter: `id=eq.${teamId}` }, p => { if (!busy("config/team")) { S.team = { name: p.new.name, activeSeasonId: p.new.active_season_id || "" }; render(); } })
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "league" }, p => { if (!busy("config/rules")) { S.rules = rulesFrom(p.new); render(); } })
+    .subscribe();
+  render();
+}
+
+/* ---------- sign-in ---------- */
+async function refreshTeams() {
+  const [t, h] = await Promise.all([sb.rpc("list_teams"), sb.rpc("league_has_admin")]);
+  if (t.error) { S.gate.msg = "Can't reach the league server. Check your connection and reload."; S.teams = []; }
+  else S.teams = t.data || [];
+  S.hasLeague = !!h.data;
+}
+async function showGate(msg) {
+  S.phase = "gate"; S.gate.msg = msg || S.gate.msg || ""; render();
+  await refreshTeams();
+  if (!S.gate.teamId || !S.teams.some(t => t.id === S.gate.teamId)) S.gate.teamId = (() => { try { return localStorage.getItem("ss-last-team") || ""; } catch (e) { return ""; } })();
+  render();
+}
+async function afterAuth() {
+  const { data, error } = await sb.rpc("whoami");
+  if (error || !data?.uid) return signOut("Please sign in again.");
+  S.username = data.admin?.username || ""; S.uid = data.uid;
+  if (data.admin) {
+    S.role = data.admin.role; S.phase = "app";
+    if (S.role === "league") {
+      await refreshTeams();
+      let pick = null; try { pick = localStorage.getItem("ss-admin-team"); } catch (e) {}
+      const team = S.teams.find(t => t.id === pick) || S.teams[0];
+      S.view.tab = team ? S.view.tab : "league";
+      if (team) return loadTeam(team.id);
+      S.teamId = null; S.loaded = { team: true, seasons: true, matches: true, rules: true };
+      const le = await sb.from("league").select("rules_text,rules_file,rules_updated").eq("id", 1).maybeSingle();
+      S.rules = rulesFrom(le.data); return render();
+    }
+    return loadTeam(data.admin.team_id);
+  }
+  if ((data.teams || []).length) { S.role = "member"; S.phase = "app"; if (S.view.tab === "admin" || S.view.tab === "league") S.view.tab = "matches"; return loadTeam(data.teams[0]); }
+  return signOut();
+}
+async function signOut(msg) {
+  try { if (S.role === "member") await sb.rpc("leave_team"); } catch (e) {}
+  if (chan) { sb.removeChannel(chan); chan = null; }
+  try { await sb.auth.signOut(); } catch (e) {}
+  Object.assign(S, { role: null, username: "", teamId: null, seasons: {}, matches: {}, team: { name: "", activeSeasonId: "" }, leagueAdmins: null });
+  S.view = { tab: "matches", matchId: null, seasonId: null }; S.ui.modal = null; renderLayer();
+  return showGate(msg || "");
+}
+
+async function boot() {
+  if (!window.supabase?.createClient) { $("#app").innerHTML = `<header><h1>The Scratch Sheet</h1></header><main><div class="panel empty"><p>Couldn't load. Check your connection and reload the page.</p></div></main>`; return; }
+  sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { storage: window.sessionStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+  const { data } = await sb.auth.getSession();
+  if (data?.session) return afterAuth();
+  return showGate();
+}
+
+/* ---------- render ---------- */
+function render() {
+  const act = document.activeElement, keep = act && act.id ? { id: act.id, val: act.value, s: act.selectionStart, e: act.selectionEnd, text: act.matches("input[type=text],textarea") } : null;
+  const app = $("#app");
+  app.className = "wrap" + (S.canWrite ? "" : " ro");
+  if (S.phase !== "app") {
+    app.innerHTML = `<header><div class="brand"><div><div class="eyebrow">8-ball doubles league</div><h1>The Scratch Sheet</h1></div></div></header><main>${S.phase === "boot" ? "" : viewGate()}</main>`;
+    if (keep) { const el = document.getElementById(keep.id); if (el) { el.value = keep.val; el.focus({ preventScroll: true }); } }
+    return;
+  }
+  const ready = S.loaded.team && S.loaded.seasons && S.loaded.matches && S.loaded.rules;
+  if (!ready) { app.innerHTML = `<header><div class="eyebrow">The Scratch Sheet</div><h1>Loading…</h1></header>`; return; }
+  const sid = curSeasonId(), s = S.seasons[sid];
+  const rec = sid ? seasonMatches(sid).map(score).reduce((a, x) => (x.res && a[x.res]++, a), { W:0, L:0, T:0 }) : null;
+  const seasons = seasonList();
+  const tabs = [["matches","Matches"],["standings","Stats"]];
+  if (isAdmin() && S.teamId) tabs.push(["admin","Team admin"]);
+  if (S.role === "league") tabs.push(["league","League"]);
+  tabs.push(["rules","Rules"]);
+  if (!tabs.some(([k]) => k === S.view.tab)) S.view.tab = S.teamId ? "matches" : "league";
+  app.innerHTML = `
+  <header>
+    <div class="brand">
+      <div><div class="eyebrow">The Scratch Sheet${s ? " · " + esc(s.name) : ""}</div><h1>${esc(S.teamId ? (S.team.name || "Your team") : "No team yet")}</h1></div>
+      <div class="row">
+        <span class="who-chip">${S.role === "member" ? "Team member" : `<b>${esc(S.username)}</b> ${S.role === "league" ? "League admin" : "Team admin"}`}<button class="btn small ghost" data-act="sign-out">${S.role === "member" ? "Leave" : "Sign out"}</button></span>
+        ${S.role === "league" && (S.teams || []).length > 1 ? `<select id="team-pick" aria-label="Team" style="width:auto">${S.teams.map(t => `<option value="${t.id}" ${t.id === S.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select>` : ""}
+        ${rec ? `<span class="record">Matches <b>${rec.W}–${rec.L}${rec.T ? "–" + rec.T : ""}</b></span>` : ""}
+        ${seasons.length > 1 ? `<select id="season-pick" aria-label="Season" style="width:auto">${seasons.map(x => `<option value="${x.id}" ${x.id === sid ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : ""}
+      </div>
+    </div>
+    <nav style="--n:${tabs.length}">${tabs.map(([k, l]) => `<button data-act="tab" data-v="${k}" aria-current="${S.view.tab === k}"${k === "rules" ? ' class="push"' : ""}>${l}</button>`).join("")}</nav>
+  </header>
+  <main>
+    ${S.view.tab === "league" ? viewLeague() : S.view.tab === "rules" ? viewRules() : !S.teamId ? `<div class="panel empty"><p>Create your first team on the League tab.</p></div>` : S.view.tab === "admin" ? viewAdmin() : S.view.tab === "rules" ? viewRules() : !s ? viewNoSeason() : S.view.tab === "standings" ? viewStandings(sid) : S.view.matchId && S.matches[S.view.matchId] ? viewMatch(S.view.matchId) : viewMatches(sid)}
+  </main>`;
+  renderLayer();
+  if (keep) { const el = document.getElementById(keep.id); if (el) { if (keep.text) { el.value = keep.val; try { el.setSelectionRange(keep.s, keep.e); } catch (e) {} } el.focus({ preventScroll: true }); } }
+}
+
+function viewNoSeason() {
+  if (!isAdmin()) return `<div class="panel empty"><h2>No season yet</h2><p>Your team admin hasn't set up a season or roster yet. Check back once they have.</p></div>`;
+  return `<div class="panel empty"><h2>Set up your team</h2><p>Name your team, add a season, and enter the players on the roster. Then come back here to build match lineups.</p><button class="btn primary w" data-act="tab" data-v="admin">Open team admin</button></div>`;
+}
+
+function currentMatches(list) {
+  const today = todayISO(), byCreated = (a, b) => (a.created || 0) - (b.created || 0);
+  const on = d => list.filter(m => m.date === d).sort(byCreated);
+  if (on(today).length) return { label: "Tonight", ms: on(today) };
+  const next = list.filter(m => m.date > today).map(m => m.date).sort()[0];
+  if (next) return { label: "Up next", ms: on(next) };
+  return null;
+}
+function currentCard(m) {
+  const sc = score(m), no = matchNo(m), [, , rest] = fmtDay(m.date), n = (m.roster || []).length;
+  const games = m.games.map((g, i) => {
+    const who = g.p.filter(Boolean).map(id => esc(pName(m.seasonId, id, m))).join(" &amp; ");
+    const opp = (g.opp || []).filter(Boolean).map(esc).join(" &amp; ");
+    const r = g.result, tag = r === "W" ? "W" : r === "L" || r === "FF" ? "L" : "";
+    return `<div class="cur-game"><div class="ball g${i + 1}"><span>${i + 1}</span></div>
+      <div class="who">${who || `<span class="muted">${g.result === "FF" ? "Forfeited" : "Not set"}</span>`}${opp ? `<div class="opp">vs ${opp}</div>` : ""}</div>
+      ${r ? `<span class="pill ${tag}">${r === "FF" ? "Forfeit" : r === "NP" ? "Not played" : r}</span>` : `<span class="small muted">—</span>`}</div>`;
+  }).join("");
+  return `<div class="cur">
+    <div class="cur-head">
+      <div style="min-width:0"><div class="eyebrow">${esc(rest)}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
+        <h2>vs ${esc(m.opponent || "Opponent TBD")}</h2>
+        <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
+      <div class="score"><b>${m.forfeit ? "FF" : sc.w + "–" + sc.l}</b>${sc.res ? `<span class="res ${sc.res}">${resLabel(sc.res)}</span>` : ""}</div>
+    </div>
+    <div class="cur-games">${games}</div>
+    ${(m.scratches || []).length ? `<div class="cur-scr">${m.scratches.slice().reverse().map(x => `<span class="scr">${m.locked ? "" : `<button class="scr-edit w" data-act="edit-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Edit scratch">`}G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)}${m.locked ? "" : ` <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Remove scratch">×</button>`}</span>`).join("")}</div>` : ""}
+    <div class="row"><button class="btn primary" data-act="open" data-id="${m.id}">${m.locked ? "View match" : m.games.some(g => g.p[0]) ? "Open match" : "Set lineup"}</button>
+      <button class="btn w" data-act="scratch" data-m="${m.id}" ${m.locked || !(m.roster || []).length ? "disabled" : ""}>Log scratch</button>
+      ${(m.scratches || []).length ? `<span class="small muted">${m.scratches.length} scratch${m.scratches.length === 1 ? "" : "es"} this match</span>` : ""}</div>
+  </div>`;
+}
+function viewMatches(sid) {
+  const list = seasonMatches(sid), cur = currentMatches(list);
+  const cards = list.map(m => {
+    const [mon, day, rest] = fmtDay(m.date), sc = score(m), no = matchNo(m);
+    return `<div class="mrow"><button class="mcard" data-act="open" data-id="${m.id}">
+      <div class="mdate">${mon}<b>${day}</b></div>
+      <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
+        <div class="small muted">${esc(rest)}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${m.comment ? " · has note" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
+      <span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span>
+    </button><button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${m.locked || !(m.roster || []).length ? "disabled" : ""} title="${m.locked ? "Match is locked" : !(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button></div>`;
+  }).join("");
+  return `
+  <section style="display:grid;gap:12px">
+    <div class="row spread"><h2>Current match</h2>${cur ? `<span class="tag">${cur.label}</span>` : ""}</div>
+    ${cur ? cur.ms.map(currentCard).join("") : `<div class="panel empty"><p>No match today and none scheduled. Add the next match with its date to see it here.</p><button class="btn primary w" data-act="new-match">New match</button></div>`}
+  </section>
+  <div class="row spread"><h2>Matches</h2><button class="btn primary w" data-act="new-match">New match</button></div>
+  ${list.length ? `<div class="mlist">${cards}</div>` : `<div class="panel empty"><p>No matches yet this season. Add one to pick who's playing and draw the pairings.</p></div>`}`;
+}
+
+function viewMatch(id) {
+  const m = S.matches[id], s = S.seasons[m.seasonId], sc = score(m), no = matchNo({ ...m, id });
+  const chk = check(m), roster = m.roster || [];
+  const players = activePlayers(s), names = id2 => esc(pName(m.seasonId, id2, m));
+  const optsFor = cur => {
+    const ids = [...roster]; if (cur && !ids.includes(cur)) ids.push(cur);
+    return `<option value="">— pick player —</option>` + ids.map(p => `<option value="${p}" ${p === cur ? "selected" : ""}>${names(p)}</option>`).join("");
+  };
+  const anyResults = m.games.some(g => g.result || g.p[0] || g.p[1]);
+  const games = m.games.map((g, i) => `
+    <div class="game ${chk.bad.has(i) ? "bad" : ""}">
+      <div class="ball g${i + 1}" title="Game ${i + 1}"><span>${i + 1}</span></div>
+      <div class="gmain">
+        <div class="pair">
+          <select id="g${i}p0" class="w" data-act="player" data-g="${i}" data-s="0" aria-label="Game ${i + 1} first player">${optsFor(g.p[0])}</select>
+          <span class="vs">&amp;</span>
+          <select id="g${i}p1" class="w" data-act="player" data-g="${i}" data-s="1" aria-label="Game ${i + 1} second player">${optsFor(g.p[1])}</select>
+        </div>
+        <div class="pair opp">
+          <input type="text" id="g${i}o0" class="w" data-field="opp" data-g="${i}" data-s="0" placeholder="Opponent player (optional)" value="${esc(g.opp?.[0])}">
+          <span class="vs">&amp;</span>
+          <input type="text" id="g${i}o1" class="w" data-field="opp" data-g="${i}" data-s="1" placeholder="Opponent player (optional)" value="${esc(g.opp?.[1])}">
+        </div>
+        ${g.comment ? `<div class="comment-preview small">${esc(g.comment)}</div>` : ""}
+      </div>
+      <div class="gside">
+        <div class="seg w" role="group" aria-label="Game ${i + 1} result">
+          <button class="W" data-act="result" data-g="${i}" data-v="W" aria-pressed="${g.result === "W"}">W</button>
+          <button class="L" data-act="result" data-g="${i}" data-v="L" aria-pressed="${g.result === "L"}">L</button>
+          <button class="X" data-act="result" data-g="${i}" data-v="FF" aria-pressed="${g.result === "FF"}" title="Forfeited by us (counts as a loss)">FF</button>
+          <button class="X" data-act="result" data-g="${i}" data-v="NP" aria-pressed="${g.result === "NP"}" title="Not played: time ran out">NP</button>
+        </div>
+        <div class="tools">
+          <button class="btn icon ghost ${g.comment ? "has-note" : ""}" data-act="note" data-g="${i}" title="${g.comment ? "Edit" : "Add"} game comment" aria-label="Game ${i + 1} comment">✎</button>
+          <button class="btn icon ghost w" data-act="move" data-g="${i}" data-v="-1" ${i === 0 ? "disabled" : ""} aria-label="Move game ${i + 1} earlier">↑</button>
+          <button class="btn icon ghost w" data-act="move" data-g="${i}" data-v="1" ${i === GAMES - 1 ? "disabled" : ""} aria-label="Move game ${i + 1} later">↓</button>
+        </div>
+      </div>
+    </div>`).join("");
+  const armedShuffle = S.ui.armed === "shuffle-" + id, armedDel = S.ui.armed === "del-" + id;
+  return `
+  <div class="row spread"><button class="btn ghost" data-act="back">← All matches</button>
+    ${m.locked || !isAdmin() ? "" : `<button class="btn danger w ${armedDel ? "armed" : ""}" data-act="del-match">${armedDel ? "Delete this match?" : "Delete match"}</button>`}</div>
+  ${lockBar(id, m)}
+  <fieldset class="lockable" ${m.locked ? "disabled" : ""}>
+  <section class="panel">
+    <div class="row spread">
+      <div><div class="eyebrow">${no.of > 1 ? `Doubleheader · match ${no.n} of ${no.of}` : "Match"}</div><h2>vs ${esc(m.opponent || "Opponent TBD")}</h2></div>
+      <div class="score"><b>${sc.w}–${sc.l}</b><span class="res ${sc.res}">${sc.res ? "Match " + resLabel(sc.res).toLowerCase() + (m.forfeit ? " by forfeit" : m.games.every(g => g.result) ? "" : " · clinched, play all 5 if time allows") : "In progress"}</span></div>
+    </div>
+    <div class="grid2">
+      <label class="f">Match date<input type="date" id="m-date" class="w" data-field="date" value="${esc(m.date)}"></label>
+      <label class="f">Opposing team<input type="text" id="m-opp" class="w" data-field="opponent" placeholder="Team name" value="${esc(m.opponent)}"></label>
+      <label class="f">Match type<select id="m-type" class="w" data-act="mtype"><option value="">Regular season</option><option value="playoff" ${m.playoff ? "selected" : ""}>Playoff</option></select></label>
+      <label class="f">Forfeit<select id="m-forfeit" class="w" data-act="forfeit"><option value="">No forfeit</option><option value="us" ${m.forfeit === "us" ? "selected" : ""}>We forfeited (fewer than 4 players)</option><option value="them" ${m.forfeit === "them" ? "selected" : ""}>Opponent forfeited</option></select></label>
+    </div>
+    <div class="row">
+      <button class="btn ${m.comment ? "has-note" : ""}" data-act="note" data-g="match">${m.comment ? "Edit match comment" : "Add match comment"}</button>
+    </div>
+    ${m.comment ? `<div class="comment-preview">${esc(m.comment)}</div>` : ""}
+  </section>
+
+  <section class="panel">
+    <div class="row spread"><h3>Who's playing <span class="muted small">${roster.length} selected</span></h3>
+      <div class="row"><button class="btn ghost small w" data-act="all-in">Select all</button><button class="btn ghost small w" data-act="all-out">Clear</button></div></div>
+    ${players.length || (m.subs || []).length ? `<div class="chips">${players.map(p => `<label class="chip w ${roster.includes(p.id) ? "on" : ""}"><input type="checkbox" data-act="roster" data-id="${p.id}" ${roster.includes(p.id) ? "checked" : ""}>${esc(p.name)}</label>`).join("")}${(m.subs || []).map(p => `<span class="chip on">${esc(p.name)} <span class="tag">sub</span><button class="x w" data-act="rm-sub" data-id="${p.id}" aria-label="Remove sub ${esc(p.name)}">×</button></span>`).join("")}</div>`
+      : `<p class="muted small" style="margin:0">This season has no players yet. Add them in Team admin.</p>`}
+    ${!m.playoff && roster.filter(id => !isSub(m, id)).length < 5 ? `<div class="prow"><input type="text" id="sub-name" class="w" placeholder="Sub name (registered player or league sub)" data-enter="add-sub"><button class="btn w" data-act="add-sub">Add sub</button></div><p class="small muted" style="margin:0">Fewer than 5 present, so a registered sub may play (rule III.C.1).</p>` : ""}
+  </section>
+
+  <section class="panel">
+    <div class="row spread"><h3>Lineup · ${GAMES} games of doubles</h3>
+      <button class="btn primary w ${armedShuffle ? "armed" : ""}" data-act="shuffle" ${roster.length < 4 || roster.length > MAX_ROSTER || m.forfeit ? "disabled" : ""}>${armedShuffle ? "Replace current lineup?" : anyResults ? "Re-draw pairings" : "Draw pairings"}</button></div>
+    <div class="notes">
+      ${chk.errs.map(e => `<div class="e">${esc(e)}</div>`).join("")}
+      ${chk.notes.map(e => `<div class="n">${esc(e)}</div>`).join("")}
+      ${!chk.errs.length && !chk.notes.length ? `<div class="ok">Lineup follows league rules: everyone present plays once before anyone plays again, and no partners repeat.</div>` : ""}
+    </div>
+    <div class="games">${games}</div>
+    <div class="legend">W won · L lost · FF forfeited, counts as a loss · NP not played because time ran out. Tap a result again to clear it.</div>
+  </section>
+  <section class="panel">
+    <div class="row spread"><h3>Scratches <span class="muted small">${(m.scratches || []).length}</span></h3><button class="btn w" data-act="scratch" data-m="${id}" ${roster.length ? "" : "disabled"}>Log scratch</button></div>
+    ${(m.scratches || []).length ? `<div class="cur-scr">${m.scratches.map(x => `<span class="scr"><button class="scr-edit w" data-act="edit-scratch" data-m="${id}" data-id="${x.id}" aria-label="Edit scratch">G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)} <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${id}" data-id="${x.id}" aria-label="Remove scratch">×</button></span>`).join("")}</div>` : `<p class="small muted" style="margin:0">No scratches logged.</p>`}
+  </section>
+  </fieldset>`;
+}
+
+function lockBar(id, m) {
+  const step = S.ui.unlock?.id === id ? S.ui.unlock.step : 0;
+  const when = m.lockedAt ? new Date(m.lockedAt).toLocaleString(undefined, { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "";
+  if (!m.locked) return `<div class="lockbar"><div class="msg"><b>Open for edits</b><span class="small muted">Lock the match when the scoresheet is final so nothing changes by accident.</span></div><button class="btn w" data-act="lock">Lock match</button></div>`;
+  if (step === 1) return `<div class="lockbar warn" role="alert"><div class="msg"><b>Warning 1 of 2: unlock this match?</b><span class="small">Unlocking reopens the lineup, results, opponents and comments for everyone with edit access.</span></div><div class="row"><button class="btn" data-act="unlock-cancel">Keep locked</button><button class="btn danger armed w" data-act="unlock-next">Continue</button></div></div>`;
+  if (step === 2) return `<div class="lockbar warn" role="alert"><div class="msg"><b>Warning 2 of 2: final confirmation</b><span class="small">Recorded wins and losses for this match can be changed or erased once it's unlocked. Unlock now?</span></div><div class="row"><button class="btn" data-act="unlock-cancel">Keep locked</button><button class="btn danger armed w" data-act="unlock-confirm">Unlock match</button></div></div>`;
+  if (!isAdmin()) return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Locked${when ? " " + esc(when) : ""}</b><span class="small muted">Lineup, results and comments are final. Ask a team admin if something needs fixing.</span></div></div>`;
+  return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Locked${when ? " " + esc(when) : ""}</b><span class="small muted">Lineup, results and comments are read-only. Unlocking takes two confirmations.</span></div><button class="btn w" data-act="unlock-start">Unlock…</button></div>`;
+}
+
+function rulesHtml(text) {
+  return text.replace(/\r\n?/g, "\n").split(/\n\s*\n/).map(b => b.trim()).filter(Boolean).map(b => {
+    const h = b.match(/^#{1,4}\s+(.+)$/);
+    if (h && !b.includes("\n")) return `<h3>${esc(h[1])}</h3>`;
+    const lines = b.split("\n");
+    if (lines.every(l => /^\s*[-*•]\s+/.test(l))) return `<ul>${lines.map(l => `<li>${esc(l.replace(/^\s*[-*•]\s+/, ""))}</li>`).join("")}</ul>`;
+    return `<p>${esc(b)}</p>`;
+  }).join("");
+}
+
+function viewRules() {
+  const r = S.rules, d = S.ui.draft, armed = S.ui.armed === "rules-post";
+  const upd = r.updated ? new Date(r.updated).toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" }) : "";
+  return `
+  <div class="row spread"><h2>League rules</h2>${r.text ? `<span class="small muted">Posted ${esc(upd)}${r.fileName ? " from " + esc(r.fileName) : ""}</span>` : ""}</div>
+  ${r.text ? `<section class="panel"><div class="rules">${rulesHtml(r.text)}</div></section>`
+    : `<div class="panel empty"><p>No rules posted yet. Upload the league rulebook below so the whole team can read it here.</p></div>`}
+  ${S.role === "league" ? `<section class="panel">
+    <h3>${r.text ? "Replace posted rules" : "Post rules"}</h3>
+    <p class="small muted" style="margin:0">Upload a PDF, Word (.docx), text (.txt or .md) or web page (.html) file, or paste the text. You can tidy the text before posting.</p>
+    <div class="row"><input type="file" id="rules-file" class="w" accept=".pdf,.docx,.txt,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="max-width:100%"></div>
+    <label class="f">Rules text<textarea id="rules-draft" class="w" data-field="rules-draft" placeholder="Paste the rules here, or pick a file above" style="min-height:200px">${esc(d?.text || "")}</textarea></label>
+    <div class="row spread">
+      <span class="small muted">${d?.text ? `${d.text.trim().split(/\s+/).length} words ready${d.fileName ? " from " + esc(d.fileName) : ""}` : ""}</span>
+      <div class="row">${d?.text ? `<button class="btn ghost" data-act="rules-clear">Clear</button>` : ""}<button class="btn primary w ${armed ? "armed" : ""}" data-act="rules-post" ${d?.text?.trim() ? "" : "disabled"}>${armed ? "Overwrite current rules?" : r.text ? "Replace rules" : "Post rules"}</button></div>
+    </div>
+  </section>` : ""}`;
+}
+
+function scratchStats(sid, ms) {
+  const s = S.seasons[sid], rows = {}, tot = { table: 0, pocket: 0, off: 0, eight: 0 };
+  ms.forEach(m => (m.scratches || []).forEach(x => { const r = rows[x.player] ||= { table: 0, pocket: 0, off: 0, eight: 0 }; r[x.type]++; tot[x.type]++; }));
+  const ids = [...new Set([...activePlayers(s).map(p => p.id), ...Object.keys(rows).filter(id => (s.players || []).some(p => p.id === id))])];
+  const sum = r => r.table + r.pocket + r.off + r.eight, z = { table: 0, pocket: 0, off: 0, eight: 0 };
+  const list = ids.map(id => ({ id, ...(rows[id] || z) })).sort((a, b) => sum(b) - sum(a));
+  return `<section class="panel"><h3>Scratches</h3>
+    <div class="tbl"><table><thead><tr><th>Player</th><th title="Complete miss, bad hit, no rail">Table</th><th>Pocket</th><th>Off table</th><th title="Scratch on the 8 or premature 8">8-ball</th><th>Total</th></tr></thead><tbody>
+    ${list.map(r => `<tr><td>${esc(pName(sid, r.id))}</td><td>${r.table}</td><td>${r.pocket}</td><td>${r.off}</td><td>${r.eight}</td><td><b>${sum(r)}</b></td></tr>`).join("") || `<tr><td colspan="6" class="muted">No players yet.</td></tr>`}
+    ${list.length ? `<tr><td class="muted">Team total</td><td>${tot.table}</td><td>${tot.pocket}</td><td>${tot.off}</td><td>${tot.eight}</td><td><b>${sum(tot)}</b></td></tr>` : ""}
+    </tbody></table></div>
+    <p class="small muted" style="margin:0">Log scratches from the Current match card or a match page. Subs' scratches stay on the match but aren't counted here.</p>
+  </section>`;
+}
+
+function viewStandings(sid) {
+  const ms = seasonMatches(sid), s = S.seasons[sid];
+  const stats = {};
+  const row = id => stats[id] ||= { id, nights: 0, gp: 0, w: 0, l: 0, err: 0 };
+  activePlayers(s).forEach(p => row(p.id));
+  ms.forEach(m => {
+    (m.roster || []).forEach(id => row(id).nights++);
+    (m.scratches || []).forEach(x => row(x.player).err++);
+    m.games.forEach(g => [...new Set(g.p.filter(Boolean))].forEach(id => { const r = row(id); if (g.result) { r.gp++; r[g.result === "W" ? "w" : "l"]++; } }));
+  });
+  const rows = Object.values(stats).filter(r => (s.players || []).some(p => p.id === r.id)).sort((a, b) => (b.gp ? b.w / b.gp : -1) - (a.gp ? a.w / a.gp : -1) || b.w - a.w);
+  const res = ms.map(m => ({ m, sc: score(m) }));
+  const W = res.filter(x => x.sc.res === "W").length, L = res.filter(x => x.sc.res === "L").length, T = res.filter(x => x.sc.res === "T").length;
+  const gw = res.reduce((a, x) => a + x.sc.w, 0), gl = res.reduce((a, x) => a + x.sc.l, 0);
+  return `
+  <h2>Stats · ${esc(s.name)}</h2>
+  <div class="grid2">
+    <div class="panel"><div class="eyebrow">Matches</div><div class="score"><b>${W}–${L}${T ? "–" + T : ""}</b><span class="muted small">${T ? "W–L–T · " : ""}${(() => { const t = todayISO(), up = ms.filter(m => !score(m).res && (m.date || "") >= t).length; return up ? up + " upcoming" : ""; })()}</span></div></div>
+    <div class="panel"><div class="eyebrow">Games</div><div class="score"><b>${gw}–${gl}</b><span class="muted small">${gw + gl ? Math.round(gw / (gw + gl) * 100) + "% won · breaks ties in league standings" : ""}</span></div></div>
+  </div>
+  <section class="panel"><h3>Players</h3>
+    <div class="tbl"><table><thead><tr><th>Player</th><th>Matches</th><th>Games</th><th>W</th><th>L</th><th>Win %</th><th title="Scratches of any type">Errors</th><th title="Errors per game played">Error %</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${esc(pName(sid, r.id))}</td><td>${r.nights}</td><td>${r.gp}</td><td>${r.w}</td><td>${r.l}</td><td>${r.gp ? Math.round(r.w / r.gp * 100) + "%" : "—"}</td><td>${r.err}</td><td>${r.gp ? Math.round(r.err / r.gp * 100) + "%" : "—"}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">No players yet.</td></tr>`}
+    </tbody></table></div>
+    <p class="small muted" style="margin:0">Matches counts nights a player was marked as playing. Games count only games with a recorded result. Errors are scratches of any type; Error % is errors per game played, so it can pass 100% if a player averages more than one scratch a game.</p>
+  </section>
+  ${scratchStats(sid, ms)}
+  <section class="panel"><h3>Match results</h3>
+    <div class="tbl"><table><thead><tr><th>Date</th><th>Opponent</th><th>Games</th><th>Result</th></tr></thead><tbody>
+    ${res.map(({ m, sc }) => `<tr><td>${esc(m.date)}</td><td>${esc(m.opponent || "TBD")}</td><td>${m.forfeit ? "Forfeit" : sc.w + "–" + sc.l}</td><td><span class="pill ${sc.res}">${resLabel(sc.res) || "Open"}</span></td></tr>`).join("") || `<tr><td colspan="4" class="muted">No matches yet.</td></tr>`}
+    </tbody></table></div>
+  </section>`;
+}
+
+function viewAdmin() {
+  const seasons = seasonList(), cur = curSeasonId();
+  return `
+  <h2>Team admin</h2>
+  <section class="panel">
+    <label class="f">Team name<input type="text" id="team-name" class="w" data-field="team-name" placeholder="e.g. Corner Pocket Crew" value="${esc(S.team.name)}"></label>
+  </section>
+  ${viewTeamPin()}
+  ${S.role === "team" ? viewAccount() : ""}
+  <section class="panel">
+    <h3>Add a season</h3>
+    <div class="grid2">
+      <label class="f">Season name<input type="text" id="new-season" class="w" placeholder="e.g. Fall 2026"></label>
+      <label class="f">Start with players from<select id="copy-from" class="w"><option value="">Nobody (empty roster)</option>${seasons.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></label>
+    </div>
+    <div><button class="btn primary w" data-act="add-season">Add season</button></div>
+  </section>
+  ${seasons.map(x => {
+    const open = S.ui.openSeason === x.id || (S.ui.openSeason == null && x.id === cur);
+    const nMatches = Object.values(S.matches).filter(m => m.seasonId === x.id).length;
+    const armed = S.ui.armed === "season-" + x.id;
+    const act = activePlayers(x), gone = (x.players || []).filter(p => p.removed);
+    return `<section class="season ${x.id === S.team.activeSeasonId ? "current" : ""}">
+      <div class="row spread">
+        <div class="row"><h3>${esc(x.name)}</h3>${x.id === S.team.activeSeasonId ? `<span class="tag">Current season</span>` : ""}<span class="small muted">${act.length} of ${MAX_ROSTER} players · ${nMatches} matches</span>${act.length < MIN_ROSTER ? `<span class="tag" style="color:var(--warn)">Needs ${MIN_ROSTER - act.length} more for the ${MIN_ROSTER}-player minimum</span>` : ""}</div>
+        <button class="btn ghost small" data-act="toggle-season" data-id="${x.id}">${open ? "Hide" : "Manage"}</button>
+      </div>
+      ${open ? `
+      <div class="grid2"><label class="f">Season name<input type="text" id="sn-${x.id}" class="w" data-field="season-name" data-id="${x.id}" value="${esc(x.name)}"></label></div>
+      <div class="plist">
+        ${act.map(p => { const a = S.ui.armed === "p-" + p.id; return `<div class="prow"><input type="text" id="pn-${p.id}" class="w" data-field="player-name" data-id="${x.id}" data-p="${p.id}" value="${esc(p.name)}" aria-label="Player name"><button class="btn danger small w ${a ? "armed" : ""}" data-act="rm-player" data-id="${x.id}" data-p="${p.id}">${a ? "Remove?" : "Remove"}</button></div>`; }).join("") || `<p class="small muted" style="margin:0">No players yet.</p>`}
+      </div>
+      <div class="prow"><input type="text" id="np-${x.id}" class="w" placeholder="New player name" data-enter="add-player" data-id="${x.id}"><button class="btn w" data-act="add-player" data-id="${x.id}">Add player</button></div>
+      ${gone.length ? `<div class="small muted">Removed: ${gone.map(p => `${esc(p.name)} <button class="btn ghost small w" data-act="restore-player" data-id="${x.id}" data-p="${p.id}">Restore</button>`).join(" ")}</div>` : ""}
+      <div class="row spread">
+        ${x.id !== S.team.activeSeasonId ? `<button class="btn w" data-act="set-current" data-id="${x.id}">Make current season</button>` : "<span></span>"}
+        <button class="btn danger w ${armed ? "armed" : ""}" data-act="rm-season" data-id="${x.id}">${armed ? `Delete season${nMatches ? ` and ${nMatches} matches` : ""}?` : "Delete season"}</button>
+      </div>` : ""}
+    </section>`;
+  }).join("")}`;
+}
+
+function renderScratch(md, L) {
+  const m = S.matches[md.matchId]; if (!m) { S.ui.modal = null; L.innerHTML = ""; return; }
+  const g = m.games[md.game] || m.games[0];
+  const inGame = g.p.filter(Boolean), pool = inGame.length ? [...new Set(inGame)] : (m.roster || []);
+  if (md.player && !pool.includes(md.player)) md.player = "";
+  if (!md.player && pool.length === 1) md.player = pool[0];
+  L.innerHTML = `<div class="scrim" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="st">
+    <h3 id="st">${md.editId ? "Edit scratch" : "Log a scratch"}</h3>
+    <div class="f small muted" style="font-weight:600">Game</div>
+    <div class="gpick">${m.games.map((x, i) => `<button data-act="scr-game" data-v="${i}" aria-pressed="${i === md.game}" aria-label="Game ${i + 1}"><span class="ball g${i + 1}"><span>${i + 1}</span></span></button>`).join("")}</div>
+    <div class="f small muted" style="font-weight:600">Player</div>
+    <div class="opts">${pool.map(id => `<button class="opt" data-act="scr-player" data-v="${id}" aria-pressed="${md.player === id}"><span class="dot"></span>${esc(pName(m.seasonId, id, m))}</button>`).join("") || `<p class="small muted" style="margin:0">Nobody is checked in for this match.</p>`}</div>
+    ${!inGame.length && pool.length ? `<p class="small muted" style="margin:0">Game ${md.game + 1} has no players set, so everyone present is listed.</p>` : ""}
+    <div class="f small muted" style="font-weight:600">Type</div>
+    <div class="opts">${SCRATCH.map(t => `<button class="opt" data-act="scr-type" data-v="${t.k}" aria-pressed="${md.type === t.k}"><span class="dot"></span>${t.label}<small>${t.hint}</small></button>`).join("")}</div>
+    ${md.editId ? `<button class="btn danger ${S.ui.armed === "scr-del" ? "armed" : ""}" data-act="scr-del">${S.ui.armed === "scr-del" ? "Tap again to delete this scratch" : "Delete scratch"}</button>` : ""}
+    <div class="row spread"><button class="btn ghost" data-act="close-modal">Cancel</button><button class="btn primary" data-act="scr-save" ${md.player && md.type ? "" : "disabled"}>${md.editId ? "Save changes" : "Log scratch"}</button></div>
+  </div></div>`;
+}
+
+function renderLayer() {
+  const md = S.ui.modal, L = $("#layer");
+  if (!md) { L.innerHTML = ""; return; }
+  if (md.kind === "scratch") { renderScratch(md, L); return; }
+  if (L.querySelector("#modal-text")) return;
+  const m = S.matches[md.matchId]; if (!m) { S.ui.modal = null; L.innerHTML = ""; return; }
+  const val = md.g === "match" ? m.comment : m.games[md.g].comment;
+  L.innerHTML = `<div class="scrim" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
+    <h3 id="mt">${md.g === "match" ? "Match comment" : `Game ${md.g + 1} comment`}</h3>
+    <textarea id="modal-text" class="w" placeholder="Break-and-run, key shots, anything to remember…">${esc(val)}</textarea>
+    <div class="row spread"><button class="btn ghost" data-act="close-modal">Cancel</button><button class="btn primary w" data-act="save-note">Save comment</button></div>
+  </div></div>`;
+  setTimeout(() => $("#modal-text")?.focus(), 0);
+}
+
+/* ---------- sign-in screen ---------- */
+function viewGate() {
+  const g = S.gate, busyAttr = g.busy ? "disabled" : "";
+  const msg = g.msg ? `<div class="notes"><div class="${g.ok ? "ok" : "e"}">${esc(g.msg)}</div></div>` : "";
+  if (S.teams && !S.hasLeague) return `
+  <section class="panel gate">
+    <div><div class="eyebrow">First-time setup</div><h2>Create the league admin</h2></div>
+    <p class="small muted" style="margin:0">This is the one account that creates teams, sets team PINs and appoints other admins. You can't change who claims it later, so set it up yourself.</p>
+    ${msg}
+    <label class="f">Username<input type="text" id="su-user" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="3–32 letters, numbers, . _ -"></label>
+    <label class="f">Password<input type="password" id="su-pass" autocomplete="new-password" placeholder="At least 8 characters"></label>
+    <label class="f">Confirm password<input type="password" id="su-pass2" autocomplete="new-password"></label>
+    <button class="btn primary" data-act="gate-setup" ${busyAttr}>${g.busy ? "Setting up…" : "Create league admin"}</button>
+  </section>`;
+  return `
+  <section class="panel gate">
+    <div class="seg gate-seg" role="tablist">
+      <button data-act="gate-tab" data-v="team" aria-pressed="${g.tab === "team"}">Team</button>
+      <button data-act="gate-tab" data-v="admin" aria-pressed="${g.tab === "admin"}">Admin</button>
+    </div>
+    ${msg}
+    ${g.tab === "team" ? `
+      <label class="f">Your team<select id="gate-team">${S.teams?.length ? `<option value="">Choose your team</option>` + S.teams.map(t => `<option value="${t.id}" ${t.id === g.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("") : `<option value="">${S.teams ? "No teams yet" : "Loading teams…"}</option>`}</select></label>
+      <label class="f">Team PIN<input type="password" id="gate-pin" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="••••"></label>
+      <button class="btn primary" data-act="gate-join" ${busyAttr}>${g.busy ? "Checking…" : "Enter"}</button>
+      <p class="small muted" style="margin:0">Ask your captain for the team's 4-digit PIN. You'll need it again next time you open the app.</p>`
+    : `
+      <label class="f">Username<input type="text" id="gate-user" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+      <label class="f">Password<input type="password" id="gate-pass" autocomplete="current-password"></label>
+      <button class="btn primary" data-act="gate-admin" ${busyAttr}>${g.busy ? "Signing in…" : "Sign in"}</button>
+      <p class="small muted" style="margin:0">For league and team admins. Forgot your password? Ask the league admin to reset it.</p>`}
+  </section>`;
+}
+
+/* ---------- team PIN (team admin tab) ---------- */
+function viewTeamPin() {
+  const armed = S.ui.armed === "pin-set";
+  return `<section class="panel">
+    <h3>Team PIN</h3>
+    <p class="small muted" style="margin:0">Players enter this 4-digit PIN to open the team. Changing it signs everyone out of the team until they enter the new one.</p>
+    <div class="prow"><input type="password" id="new-pin" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New PIN"><button class="btn w ${armed ? "armed danger" : ""}" data-act="pin-set">${armed ? "Change PIN and sign everyone out?" : "Change PIN"}</button></div>
+  </section>`;
+}
+
+/* ---------- league tab (league admin) ---------- */
+function viewLeague() {
+  const teams = S.teams || [], admins = S.leagueAdmins;
+  if (!admins) { loadAdmins(); }
+  const teamName = id => teams.find(t => t.id === id)?.name || "—";
+  const teamOpts = sel => teams.map(t => `<option value="${t.id}" ${t.id === sel ? "selected" : ""}>${esc(t.name)}</option>`).join("");
+  return `
+  <h2>League</h2>
+  <section class="panel">
+    <h3>Teams <span class="muted small">${teams.length}</span></h3>
+    ${teams.map(t => { const a = S.ui.armed === "team-del-" + t.id, pinOpen = S.ui.pinFor === t.id; return `
+      <div class="lrow">
+        <div style="min-width:0"><b>${esc(t.name)}</b>${t.id === S.teamId ? ` <span class="tag">Open now</span>` : ""}${t.has_pin ? "" : ` <span class="tag" style="color:var(--warn)">No PIN</span>`}</div>
+        <div class="row">
+          ${t.id === S.teamId ? "" : `<button class="btn small" data-act="team-open" data-id="${t.id}">Open</button>`}
+          <button class="btn small w" data-act="team-pin-open" data-id="${t.id}">Set PIN</button>
+          <button class="btn small danger w ${a ? "armed" : ""}" data-act="team-del" data-id="${t.id}">${a ? "Delete team and all its data?" : "Delete"}</button>
+        </div>
+        ${pinOpen ? `<div class="prow" style="grid-column:1/-1"><input type="password" id="tp-${t.id}" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New 4-digit PIN"><button class="btn w primary" data-act="team-pin-save" data-id="${t.id}">Save PIN</button></div>` : ""}
+      </div>`; }).join("") || `<p class="small muted" style="margin:0">No teams yet. Create the first one below.</p>`}
+    <div class="grid2">
+      <label class="f">New team name<input type="text" id="nt-name" class="w" placeholder="e.g. Itchy &amp; Scratchy"></label>
+      <label class="f">Team PIN<input type="password" id="nt-pin" class="pin w" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="4 digits"></label>
+    </div>
+    <div><button class="btn primary w" data-act="team-create">Create team</button></div>
+  </section>
+
+  <section class="panel">
+    <h3>Admins <span class="muted small">${admins ? admins.length : ""}</span></h3>
+    ${!admins ? `<p class="small muted" style="margin:0">Loading admins…</p>` : admins.map(a => { const me = a.user_id === S.uid, rm = S.ui.armed === "adm-rm-" + a.user_id, rp = S.ui.pwFor === a.user_id; return `
+      <div class="lrow">
+        <div style="min-width:0"><b>${esc(a.username)}</b>${me ? ` <span class="tag">You</span>` : ""}<div class="small muted">${a.role === "league" ? "League admin" : "Team admin · " + esc(teamName(a.team_id))}</div></div>
+        <div class="row">
+          <select class="w adm-role" data-act="adm-role" data-id="${a.user_id}" aria-label="Role for ${esc(a.username)}" style="width:auto">
+            <option value="league" ${a.role === "league" ? "selected" : ""}>League admin</option>
+            ${teams.map(t => `<option value="team:${t.id}" ${a.role === "team" && a.team_id === t.id ? "selected" : ""}>Admin of ${esc(t.name)}</option>`).join("")}
+          </select>
+          ${me ? "" : `<button class="btn small w" data-act="adm-pw-open" data-id="${a.user_id}">Reset password</button>
+          <button class="btn small danger w ${rm ? "armed" : ""}" data-act="adm-rm" data-id="${a.user_id}">${rm ? "Remove admin?" : "Remove"}</button>`}
+        </div>
+        ${rp ? `<div class="prow" style="grid-column:1/-1"><input type="text" id="pw-${a.user_id}" autocomplete="off" placeholder="New password (8+ characters)"><button class="btn w primary" data-act="adm-pw-save" data-id="${a.user_id}">Save password</button></div>` : ""}
+      </div>`; }).join("")}
+    <h3 style="margin-top:6px">Add an admin</h3>
+    <div class="grid2">
+      <label class="f">Username<input type="text" id="na-user" class="w" autocapitalize="none" spellcheck="false" placeholder="e.g. jsmith"></label>
+      <label class="f">Temporary password<input type="text" id="na-pass" class="w" autocomplete="off" placeholder="8+ characters"></label>
+      <label class="f">Role<select id="na-role" class="w"><option value="">Choose a role</option><option value="league">League admin (all teams)</option>${teams.map(t => `<option value="team:${t.id}">Admin of ${esc(t.name)}</option>`).join("")}</select></label>
+    </div>
+    <div><button class="btn primary w" data-act="adm-add">Add admin</button></div>
+    <p class="small muted" style="margin:0">Give the new admin their username and temporary password. They can change it under Your account once they sign in.</p>
+  </section>
+
+  ${viewAccount()}`;
+}
+function viewAccount() {
+  return `<section class="panel">
+    <h3>Your account <span class="muted small">${esc(S.username)}</span></h3>
+    <div class="prow"><input type="password" id="my-pass" autocomplete="new-password" placeholder="New password (8+ characters)"><button class="btn w" data-act="my-pass">Change password</button></div>
+  </section>`;
+}
+async function loadAdmins() {
+  if (S.loadingAdmins) return; S.loadingAdmins = true;
+  const { data, error } = await sb.from("admins").select("user_id,username,role,team_id").order("username");
+  S.loadingAdmins = false;
+  if (error) { toast(errMsg(error)); S.leagueAdmins = []; } else S.leagueAdmins = data;
+  render();
+}
+
+/* ---------- sign-in & league actions ---------- */
+async function gateAction(a, b) {
+  const g = S.gate;
+  const fail = m => { g.busy = false; g.ok = false; g.msg = m; render(); };
+  if (a === "gate-tab") { g.tab = b.dataset.v; g.msg = ""; render(); return true; }
+  if (a === "gate-join") {
+    const team = $("#gate-team").value, pin = $("#gate-pin").value.trim();
+    if (!team) return fail("Choose your team.");
+    if (!/^\d{4}$/.test(pin)) return fail("Enter the 4-digit team PIN.");
+    g.busy = true; g.msg = ""; g.teamId = team; render();
+    try { localStorage.setItem("ss-last-team", team); } catch (e) {}
+    let { data: ses } = await sb.auth.getSession();
+    if (!ses?.session) {
+      const r = await sb.auth.signInAnonymously();
+      if (r.error) return fail(/anonymous/i.test(errMsg(r.error)) ? "Team sign-in isn't turned on yet. The league admin needs to allow anonymous sign-ins in Supabase." : errMsg(r.error));
+    }
+    const { data, error } = await sb.rpc("join_team", { p_team: team, p_pin: pin });
+    if (error) return fail(errMsg(error));
+    if (data === "ok") { g.busy = false; g.msg = ""; return afterAuth(); }
+    return fail({ wrong: "That PIN didn't match. Try again.", locked: "Too many wrong PINs. Wait 15 minutes and try again.", no_pin: "This team doesn't have a PIN yet. Ask the league admin to set one.", no_team: "That team no longer exists." }[data] || "Couldn't check the PIN.");
+  }
+  if (a === "gate-admin") {
+    const u = $("#gate-user").value.trim().toLowerCase(), p = $("#gate-pass").value;
+    if (!u || !p) return fail("Enter your username and password.");
+    g.busy = true; g.msg = ""; render();
+    await sb.auth.signOut().catch(() => {});
+    const { error } = await sb.auth.signInWithPassword({ email: toEmail(u), password: p });
+    if (error) return fail(/invalid/i.test(errMsg(error)) ? "Wrong username or password." : errMsg(error));
+    const who = await sb.rpc("whoami");
+    if (!who.data?.admin) { await sb.auth.signOut(); return fail("That account isn't an admin anymore. Ask the league admin."); }
+    g.busy = false; return afterAuth();
+  }
+  if (a === "gate-setup") {
+    const u = $("#su-user").value.trim().toLowerCase(), p = $("#su-pass").value, p2 = $("#su-pass2").value;
+    if (!USERNAME_RE.test(u)) return fail("Usernames are 3–32 characters: letters, numbers, dot, dash or underscore.");
+    if (p.length < 8) return fail("Use a password with at least 8 characters.");
+    if (p !== p2) return fail("The two passwords don't match.");
+    g.busy = true; g.msg = ""; render();
+    await sb.auth.signOut().catch(() => {});
+    const r = await sb.auth.signUp({ email: toEmail(u), password: p });
+    if (r.error) return fail(errMsg(r.error));
+    if (!r.data.session) return fail("Supabase is asking for email confirmation. Turn off \"Confirm email\" in Authentication settings, then try again.");
+    const c = await sb.rpc("claim_league_admin", { p_username: u });
+    if (c.error) { await sb.auth.signOut(); return fail(errMsg(c.error)); }
+    g.busy = false; S.view.tab = "league"; return afterAuth();
+  }
+  return false;
+}
+
+async function leagueAction(a, b) {
+  const id = b.dataset.id, rpc = async (fn, args, ok) => {
+    const { error } = await sb.rpc(fn, args);
+    if (error) { toast(errMsg(error)); return false; }
+    if (ok) toast(ok); return true;
+  };
+  if (a === "team-open") { try { localStorage.setItem("ss-admin-team", id); } catch (e) {} S.view.tab = "matches"; await loadTeam(id); return true; }
+  if (a === "team-pin-open") { S.ui.pinFor = S.ui.pinFor === id ? null : id; render(); setTimeout(() => $("#tp-" + id)?.focus(), 0); return true; }
+  if (a === "team-pin-save") {
+    const pin = $("#tp-" + id).value.trim(); if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return true; }
+    if (await rpc("set_team_pin", { p_team: id, p_pin: pin }, "PIN saved. Players on that team need the new PIN.")) { S.ui.pinFor = null; await refreshTeams(); render(); }
+    return true;
+  }
+  if (a === "team-create") {
+    const name = $("#nt-name").value.trim(), pin = $("#nt-pin").value.trim();
+    if (!name) { toast("Give the team a name."); return true; }
+    if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return true; }
+    const { data, error } = await sb.rpc("create_team", { p_name: name, p_pin: pin });
+    if (error) { toast(errMsg(error)); return true; }
+    toast(`Created ${name}`); await refreshTeams();
+    if (!S.teamId) { try { localStorage.setItem("ss-admin-team", data); } catch (e) {} await loadTeam(data); S.view.tab = "league"; }
+    render(); return true;
+  }
+  if (a === "team-del") {
+    if (S.ui.armed !== "team-del-" + id) { arm("team-del-" + id); return true; }
+    S.ui.armed = null;
+    const { error } = await sb.from("teams").delete().eq("id", id);
+    if (error) { toast(errMsg(error)); return true; }
+    toast("Team deleted"); await refreshTeams(); S.leagueAdmins = null;
+    if (S.teamId === id) { const next = S.teams[0]; if (next) await loadTeam(next.id); else { if (chan) { sb.removeChannel(chan); chan = null; } S.teamId = null; S.seasons = {}; S.matches = {}; } }
+    render(); return true;
+  }
+  if (a === "adm-pw-open") { S.ui.pwFor = S.ui.pwFor === id ? null : id; render(); setTimeout(() => $("#pw-" + id)?.focus(), 0); return true; }
+  if (a === "adm-pw-save") {
+    const p = $("#pw-" + id).value; if (p.length < 8) { toast("Passwords need at least 8 characters."); return true; }
+    if (await rpc("reset_admin_password", { p_user: id, p_password: p }, "Password reset. Share it with the admin.")) { S.ui.pwFor = null; render(); }
+    return true;
+  }
+  if (a === "adm-rm") {
+    if (S.ui.armed !== "adm-rm-" + id) { arm("adm-rm-" + id); return true; }
+    S.ui.armed = null;
+    if (await rpc("remove_admin", { p_user: id }, "Admin removed")) { S.leagueAdmins = null; render(); }
+    return true;
+  }
+  if (a === "adm-add") {
+    const u = $("#na-user").value.trim().toLowerCase(), p = $("#na-pass").value, role = $("#na-role").value;
+    if (!USERNAME_RE.test(u)) { toast("Usernames are 3–32 characters: letters, numbers, dot, dash or underscore."); return true; }
+    if (p.length < 8) { toast("The temporary password needs at least 8 characters."); return true; }
+    if (!role) { toast("Choose a role."); return true; }
+    if ((S.leagueAdmins || []).some(x => x.username === u)) { toast("That username is taken."); return true; }
+    const mem = {}; const tmp = window.supabase.createClient(SB_URL, SB_KEY, { auth: { storage: { getItem: k => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: k => { delete mem[k]; } }, persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "ss-new-admin" } });
+    const r = await tmp.auth.signUp({ email: toEmail(u), password: p });
+    if (r.error) { toast(/registered|exists/i.test(errMsg(r.error)) ? "That username is taken." : errMsg(r.error)); return true; }
+    if (!r.data.user?.id || !r.data.user.identities?.length) { toast("That username is taken."); return true; }
+    const [rl, team] = role.split(":");
+    if (await rpc("add_admin", { p_user: r.data.user.id, p_username: u, p_role: rl, p_team: team || null }, `Added ${u}`)) { S.leagueAdmins = null; render(); }
+    return true;
+  }
+  if (a === "my-pass") {
+    const p = $("#my-pass").value; if (p.length < 8) { toast("Passwords need at least 8 characters."); return true; }
+    const { error } = await sb.auth.updateUser({ password: p });
+    toast(error ? errMsg(error) : "Password changed"); if (!error) $("#my-pass").value = "";
+    return true;
+  }
+  return false;
+}
+async function changeAdminRole(sel) {
+  const id = sel.dataset.id, [rl, team] = sel.value.split(":");
+  const { error } = await sb.rpc("update_admin", { p_user: id, p_role: rl, p_team: team || null });
+  if (error) toast(errMsg(error)); else toast("Role updated");
+  S.leagueAdmins = null; render();
+}
+
+/* ---------- actions ---------- */
+function editMatch(fn) { const id = S.view.matchId, m = S.matches[id]; if (!m) return; if (m.locked) { toast("This match is locked. Unlock it to make changes."); render(); return; } fn(m); persist("matches", id); render(); }
+function editSeason(id, fn) { const s = S.seasons[id]; if (!s) return; fn(s); persist("seasons", id); render(); }
+function arm(key) { if (S.ui.armed === key) return true; S.ui.armed = key; render(); clearTimeout(arm.t); arm.t = setTimeout(() => { if (S.ui.armed === key) { S.ui.armed = null; render(); } }, 4000); return false; }
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-act]"); if (!b || b.tagName === "SELECT" || b.type === "checkbox") return;
+  const a = b.dataset.act, g = +b.dataset.g;
+  if (a.startsWith("gate-")) { gateAction(a, b); return; }
+  if (a === "sign-out") { signOut(); return; }
+  if (/^(team-|adm-|my-pass)/.test(a)) { if (a === "my-pass" || S.role === "league") leagueAction(a, b); return; }
+  if (a === "pin-set") {
+    const pin = $("#new-pin").value.trim(); if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return; }
+    if (S.ui.armed !== "pin-set") { arm("pin-set"); setTimeout(() => { const el = $("#new-pin"); if (el) el.value = pin; }, 0); return; }
+    S.ui.armed = null;
+    sb.rpc("set_team_pin", { p_team: S.teamId, p_pin: pin }).then(({ error }) => { toast(error ? errMsg(error) : "PIN changed. Share the new PIN with your team."); render(); });
+    return;
+  }
+  if (a === "scratch") { const m = S.matches[b.dataset.m]; if (!m || m.locked) return; S.ui.modal = { kind: "scratch", matchId: b.dataset.m, game: defaultGame(m), player: "", type: "" }; renderLayer(); return; }
+  if (a === "scr-game") { S.ui.modal.game = +b.dataset.v; renderLayer(); return; }
+  if (a === "scr-player") { S.ui.modal.player = b.dataset.v; renderLayer(); return; }
+  if (a === "scr-type") { S.ui.modal.type = b.dataset.v; renderLayer(); return; }
+  if (a === "edit-scratch") { const m = S.matches[b.dataset.m], x = (m?.scratches || []).find(y => y.id === b.dataset.id); if (!x || m.locked) return; S.ui.armed = null; S.ui.modal = { kind: "scratch", matchId: b.dataset.m, editId: x.id, game: x.game, player: x.player, type: x.type }; renderLayer(); return; }
+  if (a === "scr-del") {
+    const md = S.ui.modal, m = S.matches[md.matchId]; if (!m || m.locked || !S.canWrite) return;
+    if (S.ui.armed !== "scr-del") { S.ui.armed = "scr-del"; renderLayer(); return; }
+    S.ui.armed = null; m.scratches = (m.scratches || []).filter(x => x.id !== md.editId); S.ui.modal = null; renderLayer(); persist("matches", md.matchId); render(); toast("Scratch deleted"); return;
+  }
+  if (a === "scr-save") {
+    const md = S.ui.modal, m = S.matches[md.matchId]; if (m?.locked) { S.ui.modal = null; renderLayer(); render(); toast("This match was locked, so the scratch wasn't saved."); return; } if (!m || !S.canWrite) return;
+    if (md.editId) {
+      const x = (m.scratches || []).find(y => y.id === md.editId);
+      if (x) Object.assign(x, { player: md.player, type: md.type, game: md.game, edited: Date.now() });
+      m.names ||= {}; m.names[md.player] = pName(m.seasonId, md.player, m);
+      S.ui.modal = null; S.ui.armed = null; renderLayer(); persist("matches", md.matchId); render(); toast("Scratch updated"); return;
+    }
+    (m.scratches ||= []).push({ id: uid(), player: md.player, type: md.type, game: md.game, at: Date.now() });
+    m.names ||= {}; m.names[md.player] = pName(m.seasonId, md.player, m);
+    S.ui.modal = null; renderLayer(); persist("matches", md.matchId); render(); toast(`${scrLabel(md.type)} logged for ${pName(m.seasonId, md.player, m)}`); return;
+  }
+  if (a === "rm-scratch") { const m = S.matches[b.dataset.m]; if (!m || m.locked || !S.canWrite) return; m.scratches = (m.scratches || []).filter(x => x.id !== b.dataset.id); persist("matches", b.dataset.m); render(); toast("Scratch removed"); return; }
+  if (a === "close-modal") { if (e.target !== b) return; S.ui.modal = null; renderLayer(); return; }
+  if (a === "tab") { S.view.tab = b.dataset.v; S.view.matchId = null; S.ui.armed = null; S.ui.unlock = null; render(); window.scrollTo(0, 0); return; }
+  if (a === "open") { S.view.matchId = b.dataset.id; render(); window.scrollTo(0, 0); return; }
+  if (a === "back") { S.view.matchId = null; S.ui.unlock = null; render(); return; }
+  if (a === "toggle-season") { const id = b.dataset.id, open = S.ui.openSeason === id || (S.ui.openSeason == null && id === curSeasonId()); S.ui.openSeason = open ? "" : id; render(); return; }
+  if (a === "note") { S.ui.modal = { matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g }; renderLayer(); return; }
+  if (!S.canWrite) return;
+  if (a === "save-note") { const v = $("#modal-text").value.trim(), md = S.ui.modal; S.ui.modal = null; renderLayer(); editMatch(m => { if (md.g === "match") m.comment = v; else m.games[md.g].comment = v; }); return; }
+  if (a === "add-sub") {
+    const inp = $("#sub-name"), name = inp?.value.trim(); if (!name) { inp?.focus(); return; }
+    editMatch(m => { const id = "sub-" + uid(); (m.subs ||= []).push({ id, name }); m.roster = [...(m.roster || []), id]; });
+    setTimeout(() => $("#sub-name")?.focus(), 0); return;
+  }
+  if (a === "rm-sub") { const id = b.dataset.id; editMatch(m => { m.subs = (m.subs || []).filter(x => x.id !== id); m.roster = (m.roster || []).filter(x => x !== id); m.games.forEach(gm => { gm.p = gm.p.map(x => x === id ? "" : x); }); }); return; }
+  if (a === "lock") { const id = S.view.matchId, m = S.matches[id]; if (!m) return; m.locked = true; m.lockedAt = Date.now(); S.ui.unlock = null; persist("matches", id); render(); toast("Match locked"); return; }
+  if (/^unlock-(start|next|confirm)$/.test(a) && !isAdmin()) return;
+  if (a === "unlock-start") { S.ui.unlock = { id: S.view.matchId, step: 1 }; render(); return; }
+  if (a === "unlock-next") { S.ui.unlock = { id: S.view.matchId, step: 2 }; render(); return; }
+  if (a === "unlock-cancel") { S.ui.unlock = null; render(); return; }
+  if (a === "unlock-confirm") { const id = S.view.matchId, m = S.matches[id]; if (!m || S.ui.unlock?.id !== id || S.ui.unlock.step !== 2) return; m.locked = false; delete m.lockedAt; S.ui.unlock = null; persist("matches", id); render(); toast("Match unlocked"); return; }
+  if (a === "rules-clear") { S.ui.draft = null; S.ui.armed = null; const f = $("#rules-file"); if (f) f.value = ""; render(); return; }
+  if (a === "rules-post" && S.role !== "league") return;
+  if (a === "rules-post") {
+    const text = (S.ui.draft?.text || "").trim(); if (!text) return;
+    if (text.length > 200000) { toast("That's too long to post. Trim it under 200,000 characters."); return; }
+    if (S.rules.text && !arm("rules-post")) return;
+    S.ui.armed = null; S.rules = { text, fileName: S.ui.draft.fileName || "", updated: Date.now() }; S.ui.draft = null;
+    persist("config", "rules"); render(); window.scrollTo(0, 0); toast("Rules posted"); return;
+  }
+  if (a === "new-match") {
+    const id = uid(), sid = curSeasonId();
+    S.matches[id] = { seasonId: sid, date: todayISO(), opponent: "", roster: [], games: Array.from({ length: GAMES }, blankGame), comment: "", names: {}, created: Date.now() };
+    persist("matches", id); S.view.matchId = id; render(); window.scrollTo(0, 0); return;
+  }
+  if (a === "del-match") { if (!isAdmin()) return; if (S.matches[S.view.matchId]?.locked) return; if (!arm("del-" + S.view.matchId)) return; const id = S.view.matchId; delete S.matches[id]; persist("matches", id); S.view.matchId = null; S.ui.armed = null; render(); toast("Match deleted"); return; }
+  if (a === "result") { editMatch(m => { m.games[g].result = m.games[g].result === b.dataset.v ? "" : b.dataset.v; }); return; }
+  if (a === "move") { editMatch(m => { const j = g + +b.dataset.v; [m.games[g], m.games[j]] = [m.games[j], m.games[g]]; }); return; }
+  if (a === "all-in" || a === "all-out") { editMatch(m => { m.roster = a === "all-in" ? activePlayers(S.seasons[m.seasonId]).map(p => p.id) : []; }); return; }
+  if (a === "shuffle") {
+    const m = S.matches[S.view.matchId]; if (m.locked) return; const filled = m.games.some(x => x.result || x.p[0] || x.p[1]);
+    if (filled && !arm("shuffle-" + S.view.matchId)) return;
+    S.ui.armed = null;
+    const games = randomLineup(m); if (!games) { toast(m.roster?.length < 4 ? "Need at least 4 players present to build a lineup." : "Couldn't find a lineup that fits the rules. Check who's present."); render(); return; }
+    editMatch(x => { x.games = games; }); toast("Pairings drawn"); return;
+  }
+  if (a === "add-season") {
+    const name = $("#new-season").value.trim(); if (!name) { toast("Give the season a name first."); $("#new-season").focus(); return; }
+    const from = S.seasons[$("#copy-from").value], id = uid();
+    S.seasons[id] = { name, created: Date.now(), players: from ? activePlayers(from).map(p => ({ id: p.id, name: p.name })) : [] };
+    persist("seasons", id);
+    if (!S.team.activeSeasonId || !S.seasons[S.team.activeSeasonId]) { S.team.activeSeasonId = id; persist("config", "team"); }
+    S.ui.openSeason = id; render(); toast(`Added ${name}`); return;
+  }
+  if (a === "set-current") { S.team.activeSeasonId = b.dataset.id; S.view.seasonId = null; persist("config", "team"); render(); return; }
+  if (a === "rm-season") {
+    const id = b.dataset.id; if (!arm("season-" + id)) return;
+    for (const [mid, m] of Object.entries(S.matches)) if (m.seasonId === id) { delete S.matches[mid]; persist("matches", mid); }
+    delete S.seasons[id]; persist("seasons", id);
+    if (S.team.activeSeasonId === id) { S.team.activeSeasonId = seasonList()[0]?.id || ""; persist("config", "team"); }
+    S.ui.armed = null; render(); toast("Season deleted"); return;
+  }
+  if (a === "add-player") {
+    const inp = $("#np-" + b.dataset.id), name = inp.value.trim(); if (!name) { inp.focus(); return; }
+    if (activePlayers(S.seasons[b.dataset.id]).length >= MAX_ROSTER) { toast(`Rosters max out at ${MAX_ROSTER} players (rule II.A).`); return; }
+    inp.value = ""; editSeason(b.dataset.id, s => { (s.players ||= []).push({ id: uid(), name }); }); setTimeout(() => $("#np-" + b.dataset.id)?.focus(), 0); return;
+  }
+  if (a === "rm-player") { if (!arm("p-" + b.dataset.p)) return; S.ui.armed = null; editSeason(b.dataset.id, s => { const p = s.players.find(x => x.id === b.dataset.p); if (p) p.removed = true; }); return; }
+  if (a === "restore-player") { if (activePlayers(S.seasons[b.dataset.id]).length >= MAX_ROSTER) { toast(`Rosters max out at ${MAX_ROSTER} players (rule II.A).`); return; } editSeason(b.dataset.id, s => { const p = s.players.find(x => x.id === b.dataset.p); if (p) delete p.removed; }); return; }
+});
+
+document.addEventListener("change", e => {
+  const t = e.target;
+  if (t.id === "rules-file" && t.files?.[0]) { readRulesFile(t.files[0]); return; }
+  if (t.id === "season-pick") { S.view.seasonId = t.value; S.view.matchId = null; try { localStorage.setItem("ss-season-" + S.teamId, t.value); } catch (x) {} render(); return; }
+  if (t.id === "team-pick") { try { localStorage.setItem("ss-admin-team", t.value); } catch (x) {} loadTeam(t.value); return; }
+  if (t.dataset.act === "adm-role") { changeAdminRole(t); return; }
+  if (t.id === "gate-team") { S.gate.teamId = t.value; return; }
+  if (!S.canWrite) return;
+  if (t.dataset.act === "player") { editMatch(m => { m.games[+t.dataset.g].p[+t.dataset.s] = t.value; m.names ||= {}; if (t.value) m.names[t.value] = pName(m.seasonId, t.value, m); }); return; }
+  if (t.dataset.act === "roster") { editMatch(m => { const id = t.dataset.id; m.roster = t.checked ? [...new Set([...(m.roster || []), id])] : (m.roster || []).filter(x => x !== id); }); return; }
+  if (t.dataset.act === "mtype") { editMatch(m => { m.playoff = t.value === "playoff"; }); return; }
+  if (t.dataset.act === "forfeit") { editMatch(m => { m.forfeit = t.value; }); return; }
+  if (t.dataset.field === "date") { editMatch(m => { m.date = t.value; }); return; }
+});
+
+document.addEventListener("input", e => {
+  const t = e.target, f = t.dataset.field; if (!f || !S.canWrite) return;
+  if (f === "rules-draft") { S.ui.draft = { text: t.value, fileName: S.ui.draft?.fileName || "" }; const btn = $('[data-act="rules-post"]'); if (btn) btn.disabled = !t.value.trim(); return; }
+  if ((f === "opponent" || f === "opp") && S.matches[S.view.matchId]?.locked) return;
+  if (f === "opponent") { const m = S.matches[S.view.matchId]; m.opponent = t.value; persist("matches", S.view.matchId); }
+  else if (f === "opp") { const m = S.matches[S.view.matchId], gm = m.games[+t.dataset.g]; (gm.opp ||= ["", ""])[+t.dataset.s] = t.value; persist("matches", S.view.matchId); }
+  else if (f === "team-name") { S.team.name = t.value; persist("config", "team"); }
+  else if (f === "season-name") { S.seasons[t.dataset.id].name = t.value; persist("seasons", t.dataset.id); }
+  else if (f === "player-name") { const p = S.seasons[t.dataset.id].players.find(x => x.id === t.dataset.p); if (p) p.name = t.value; persist("seasons", t.dataset.id); }
+});
+document.addEventListener("focusout", e => { if (e.target.dataset?.field && e.target.type === "text") { clearTimeout(window._fo); window._fo = setTimeout(render, 300); } });
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && S.phase === "gate") { const btn = $('[data-act^="gate-"].primary'); if (btn && !btn.disabled) { e.preventDefault(); btn.click(); } return; }
+  if (e.key === "Escape" && S.ui.modal) { S.ui.modal = null; renderLayer(); }
+  if (e.key === "Enter" && e.target.dataset?.enter === "add-player") $(`[data-act="add-player"][data-id="${e.target.dataset.id}"]`)?.click();
+  if (e.key === "Enter" && e.target.dataset?.enter === "add-sub") $('[data-act="add-sub"]')?.click();
+  if (e.key === "Enter" && e.target.id === "new-season") $('[data-act="add-season"]')?.click();
+});
+
+function loadScript(src) { return new Promise((ok, no) => { if (document.querySelector(`script[src="${src}"]`)) return ok(); const el = document.createElement("script"); el.src = src; el.onload = ok; el.onerror = no; document.head.append(el); }); }
+async function readRulesFile(file) {
+  const name = file.name, ext = name.split(".").pop().toLowerCase();
+  try {
+    let text = "";
+    if (ext === "docx") {
+      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js");
+      text = (await window.mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
+    } else if (ext === "html" || ext === "htm") {
+      const doc = new DOMParser().parseFromString(await file.text(), "text/html");
+      doc.querySelectorAll("script,style").forEach(x => x.remove());
+      doc.querySelectorAll("p,div,li,h1,h2,h3,h4,br,tr").forEach(x => x.append("\n"));
+      text = doc.body.textContent;
+    } else if (ext === "pdf") {
+      const base = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+      await loadScript(base + "pdf.min.js"); await loadScript(base + "pdf.worker.min.js");
+      const lib = window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc = base + "pdf.worker.min.js";
+      const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+      const pages = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const tc = await (await pdf.getPage(i)).getTextContent(); let line = "", out = [], lastY = null;
+        for (const it of tc.items) { const y = Math.round(it.transform[5]); if (lastY !== null && Math.abs(y - lastY) > 2) { out.push(line); line = ""; } line += it.str; lastY = y; if (it.hasEOL) { out.push(line); line = ""; lastY = null; } }
+        out.push(line); pages.push(out.map(l => l.trim()).join("\n"));
+      }
+      text = pages.join("\n\n");
+    } else if (ext === "doc") {
+      toast("Old .doc files can't be read. Save it as .docx and upload again."); return;
+    } else text = await file.text();
+    text = text.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) { toast("That file has no readable text."); return; }
+    S.ui.draft = { text, fileName: name }; S.ui.armed = null; render(); toast(`Loaded ${name}. Review it, then post.`);
+  } catch (e) { toast("Couldn't read that file. Try saving it as .docx or .txt, or paste the text."); }
+}
+
+boot();
+</script>
+</body>
+</html>
