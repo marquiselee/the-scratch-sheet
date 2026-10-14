@@ -7,6 +7,7 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v17 2026-10-14: League admins can rename seasons.
   v16 2026-10-14: Multiple leagues, each with seasons (one current) and teams that carry over between seasons; rosters per team per season;
                   sign-in is League → Team → PIN; Owner / League admin / Team admin roles; rules per league.
   v15 2026-10-14: Admins sign in with real email addresses; "Forgot password?" sends a reset link by email; set-new-password screen.
@@ -1060,9 +1061,11 @@ function viewLeague() {
         <div style="min-width:0"><b>${esc(s.name)}</b>${cur ? ` <span class="tag">Current season</span>` : ""}<div class="small muted">${n} team${n === 1 ? "" : "s"}</div></div>
         <div class="row">
           ${s.id === sid ? "" : `<button class="btn small" data-act="season-view" data-id="${s.id}">Teams</button>`}
+          <button class="btn small w" data-act="season-rename-open" data-id="${s.id}">Rename</button>
           ${cur ? "" : `<button class="btn small w" data-act="season-current" data-id="${s.id}">Make current</button>`}
           <button class="btn small danger w ${a ? "armed" : ""}" data-act="season-del" data-id="${s.id}">${a ? "Delete season, its rosters and matches?" : "Delete"}</button>
         </div>
+        ${S.ui.renameSeason === s.id ? `<div class="prow" style="grid-column:1/-1"><input type="text" id="sr-${s.id}" value="${esc(s.name)}" data-enter="season-rename-save" data-id="${s.id}" aria-label="Season name"><button class="btn w primary" data-act="season-rename-save" data-id="${s.id}">Save name</button></div>` : ""}
       </div>`; }).join("") || `<p class="small muted" style="margin:0">No seasons yet.</p>`}
     <div class="grid2">
       <label class="f">New season<input type="text" id="ns-name" class="w" placeholder="e.g. Spring 2027"></label>
@@ -1235,6 +1238,15 @@ async function leagueAction(a, b) {
     if (S.teamId === id) { const next = S.adminTeams[0]; if (next) await loadTeam(next.id); else { if (chan) { sb.removeChannel(chan); chan = null; } S.teamId = null; S.seasons = {}; S.matches = {}; render(); } }
     return true;
   }
+  if (a === "season-rename-open") { S.ui.renameSeason = S.ui.renameSeason === id ? null : id; render(); setTimeout(() => { const el = $("#sr-" + id); if (el) { el.focus(); el.select(); } }, 0); return true; }
+  if (a === "season-rename-save") {
+    const name = ($("#sr-" + id)?.value || "").trim();
+    if (!name) { toast("Give the season a name."); return true; }
+    if (name.length > 60) { toast("Keep season names under 60 characters."); return true; }
+    const { error } = await sb.from("league_seasons").update({ name }).eq("id", id);
+    if (say(error, `Renamed to ${name}`)) { S.ui.renameSeason = null; await refreshAdminData(lid); }
+    return true;
+  }
   if (a === "season-view") { S.mgr.seasonId = id; render(); return true; }
   if (a === "season-current") { const { error } = await sb.from("leagues").update({ current_season_id: id }).eq("id", lid); if (say(error, "Current season changed")) { S.mgr.seasonId = id; await refreshAdminData(lid); } return true; }
   if (a === "season-del") {
@@ -1344,7 +1356,7 @@ document.addEventListener("click", e => {
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
   if (a === "sign-out") { signOut(); return; }
-  if (/^(team-|adm-|my-pass$|season-(view|current|del|add)$|league-(create|del)$)/.test(a)) { if (a === "my-pass" || isLeagueRole()) leagueAction(a, b); return; }
+  if (/^(team-|adm-|my-pass$|season-(view|current|del|add|rename-open|rename-save)$|league-(create|del)$)/.test(a)) { if (a === "my-pass" || isLeagueRole()) leagueAction(a, b); return; }
   if (a === "pin-set") {
     const pin = $("#new-pin").value.trim(); if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return; }
     if (S.ui.armed !== "pin-set") { arm("pin-set"); setTimeout(() => { const el = $("#new-pin"); if (el) el.value = pin; }, 0); return; }
@@ -1466,6 +1478,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "Enter" && (S.phase === "gate" || S.phase === "recovery")) { const btn = $('[data-act^="gate-"].primary, [data-act="recover-save"]'); if (btn && !btn.disabled) { e.preventDefault(); btn.click(); } return; }
   if (e.key === "Escape" && S.ui.modal) { S.ui.modal = null; renderLayer(); }
   if (e.key === "Enter" && e.target.dataset?.enter === "add-player") $(`[data-act="add-player"][data-id="${e.target.dataset.id}"]`)?.click();
+  if (e.key === "Enter" && e.target.dataset?.enter === "season-rename-save") $(`[data-act="season-rename-save"][data-id="${e.target.dataset.id}"]`)?.click();
   if (e.key === "Enter" && e.target.dataset?.enter === "add-sub") $('[data-act="add-sub"]')?.click();
 });
 
