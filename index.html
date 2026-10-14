@@ -7,6 +7,7 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v19 2026-10-14: "Exit" replaces "Leave"; scratch pop-up shows each player's running count for the game and has "Log & add another" for repeat scratches.
   v18 2026-10-14: Current match heading reads Today's Match / Next Match / Last Match; full date on the card; Log scratch stays beside each match on phones.
   v17 2026-10-14: League admins can rename seasons.
   v16 2026-10-14: Multiple leagues, each with seasons (one current) and teams that carry over between seasons; rosters per team per season;
@@ -621,7 +622,7 @@ function render() {
     <div class="brand">
       <div><div class="eyebrow">${esc(S.league?.name || "The Scratch Sheet")}${s ? " · " + esc(s.name) : ""}</div><h1>${esc(S.teamId ? (S.team.name || "Your team") : "No team yet")}</h1></div>
       <div class="row">
-        <span class="who-chip">${S.role === "member" ? "Team member" : `<b>${esc(S.username)}</b> ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`}<button class="btn small ghost" data-act="sign-out">${S.role === "member" ? "Leave" : "Sign out"}</button></span>
+        <span class="who-chip">${S.role === "member" ? "Team member" : `<b>${esc(S.username)}</b> ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`}<button class="btn small ghost" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></span>
         ${isLeagueRole() && S.adminTeams.length > 1 ? `<select id="team-pick" aria-label="Team" style="width:auto">${S.adminLeagues.map(l => { const ts = S.adminTeams.filter(t => t.league_id === l.id); return ts.length ? `<optgroup label="${esc(l.name)}">${ts.map(t => `<option value="${t.id}" ${t.id === S.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</optgroup>` : ""; }).join("")}</select>` : ""}
         ${rec ? `<span class="record">Matches <b>${rec.W}–${rec.L}${rec.T ? "–" + rec.T : ""}</b></span>` : ""}
         ${seasons.length > 1 ? `<select id="season-pick" aria-label="Season" style="width:auto">${seasons.map(x => `<option value="${x.id}" ${x.id === sid ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : ""}
@@ -917,12 +918,14 @@ function renderScratch(md, L) {
     <div class="f small muted" style="font-weight:600">Game</div>
     <div class="gpick">${m.games.map((x, i) => `<button data-act="scr-game" data-v="${i}" aria-pressed="${i === md.game}" aria-label="Game ${i + 1}"><span class="ball g${i + 1}"><span>${i + 1}</span></span></button>`).join("")}</div>
     <div class="f small muted" style="font-weight:600">Player</div>
-    <div class="opts">${pool.map(id => `<button class="opt" data-act="scr-player" data-v="${id}" aria-pressed="${md.player === id}"><span class="dot"></span>${esc(pName(m.seasonId, id, m))}</button>`).join("") || `<p class="small muted" style="margin:0">Nobody is checked in for this match.</p>`}</div>
+    <div class="opts">${pool.map(id => { const c = (m.scratches || []).filter(x => x.game === md.game && x.player === id && x.id !== md.editId).length; return `<button class="opt" data-act="scr-player" data-v="${id}" aria-pressed="${md.player === id}"><span class="dot"></span>${esc(pName(m.seasonId, id, m))}${c ? `<small>${c} scratch${c === 1 ? "" : "es"} already this game</small>` : ""}</button>`; }).join("") || `<p class="small muted" style="margin:0">Nobody is checked in for this match.</p>`}</div>
     ${!inGame.length && pool.length ? `<p class="small muted" style="margin:0">Game ${md.game + 1} has no players set, so everyone present is listed.</p>` : ""}
     <div class="f small muted" style="font-weight:600">Type</div>
     <div class="opts">${SCRATCH.map(t => `<button class="opt" data-act="scr-type" data-v="${t.k}" aria-pressed="${md.type === t.k}"><span class="dot"></span>${t.label}<small>${t.hint}</small></button>`).join("")}</div>
     ${md.editId ? `<button class="btn danger ${S.ui.armed === "scr-del" ? "armed" : ""}" data-act="scr-del">${S.ui.armed === "scr-del" ? "Tap again to delete this scratch" : "Delete scratch"}</button>` : ""}
-    <div class="row spread"><button class="btn ghost" data-act="close-modal">Cancel</button><button class="btn primary" data-act="scr-save" ${md.player && md.type ? "" : "disabled"}>${md.editId ? "Save changes" : "Log scratch"}</button></div>
+    <div class="row spread"><button class="btn ghost" data-act="close-modal">${md.logged ? "Done" : "Cancel"}</button>
+      <div class="row">${md.editId ? "" : `<button class="btn" data-act="scr-save" data-more="1" ${md.player && md.type ? "" : "disabled"}>Log &amp; add another</button>`}<button class="btn primary" data-act="scr-save" ${md.player && md.type ? "" : "disabled"}>${md.editId ? "Save changes" : "Log scratch"}</button></div></div>
+    ${md.logged ? `<p class="small muted" style="margin:0">${md.logged} logged so far. Each one counts separately.</p>` : ""}
   </div></div>`;
 }
 
@@ -1395,7 +1398,11 @@ document.addEventListener("click", e => {
     }
     (m.scratches ||= []).push({ id: uid(), player: md.player, type: md.type, game: md.game, at: Date.now() });
     m.names ||= {}; m.names[md.player] = pName(m.seasonId, md.player, m);
-    S.ui.modal = null; renderLayer(); persist("matches", md.matchId); render(); toast(`${scrLabel(md.type)} logged for ${pName(m.seasonId, md.player, m)}`); return;
+    const nth = m.scratches.filter(x => x.game === md.game && x.player === md.player).length;
+    const msg = `${scrLabel(md.type)} logged for ${pName(m.seasonId, md.player, m)}${nth > 1 ? ` (${ord(nth)} this game)` : ""}`;
+    persist("matches", md.matchId); render();
+    if (b.dataset.more) { md.type = ""; md.logged = (md.logged || 0) + 1; renderLayer(); toast(msg); return; }
+    S.ui.modal = null; renderLayer(); toast(msg); return;
   }
   if (a === "rm-scratch") { const m = S.matches[b.dataset.m]; if (!m || m.locked || !S.canWrite) return; m.scratches = (m.scratches || []).filter(x => x.id !== b.dataset.id); persist("matches", b.dataset.m); render(); toast("Scratch removed"); return; }
   if (a === "close-modal") { if (e.target !== b) return; S.ui.modal = null; renderLayer(); return; }
