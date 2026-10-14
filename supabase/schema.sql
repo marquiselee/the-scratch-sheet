@@ -3,9 +3,9 @@
 -- Safe to run once on a new project. Re-running drops and recreates the app's tables (and their data).
 --
 -- Roles
---   League admin : signs in with username + password. Creates teams, sets PINs, appoints admins,
+--   League admin : signs in with email + password. Creates teams, sets PINs, appoints admins,
 --                  resets admin passwords, posts league rules. Sees every team.
---   Team admin   : signs in with username + password. Manages one team (seasons, roster, PIN, matches).
+--   Team admin   : signs in with email + password. Manages one team (seasons, roster, PIN, matches).
 --   Team member  : anonymous session that unlocks one team by entering its 4-digit PIN.
 --                  Reads the team, creates/edits matches, logs scratches. Cannot delete matches,
 --                  change rosters/seasons, or unlock a locked match.
@@ -40,7 +40,7 @@ create table public.team_pins (
 
 create table public.admins (
   user_id    uuid primary key references auth.users (id) on delete cascade,
-  username   text not null unique check (username ~ '^[a-z0-9._-]{3,32}$'),
+  username   text not null unique check (username ~* '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' and length(username) <= 254), -- the admin's sign-in email
   role       text not null check (role in ('league', 'team')),
   team_id    uuid references public.teams (id) on delete cascade,
   created_at timestamptz not null default now(),

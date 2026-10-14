@@ -7,6 +7,7 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v15 2026-10-14: Admins sign in with real email addresses; "Forgot password?" sends a reset link by email; set-new-password screen.
   v14 2026-10-14: Moved to GitHub Pages + Supabase. League with many teams; team members sign in per session with team + 4-digit PIN;
                   league and team admins sign in with username + password; League tab for teams, PINs and admins; all permissions enforced by the database.
   v13 2026-10-14: Renamed app from Rack Sheet to The Scratch Sheet.
@@ -56,11 +57,11 @@ img{max-width:100%}
 .gate-seg{display:grid!important;grid-template-columns:1fr 1fr}
 .gate-seg button{min-height:44px;font-size:14px}
 .gate-seg button[aria-pressed="true"]{background:var(--cloth);color:var(--cloth-ink)}
-input[type=password]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
+input[type=password],input[type=email]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
 input.pin{font:600 22px/1 var(--f-mono);letter-spacing:.5em;text-align:center}
 input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 .who-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
-.who-chip b{color:var(--ink);font-weight:600}
+.who-chip b{color:var(--ink);font-weight:600;max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .lrow:first-of-type{border-top:0}
 @media (max-width:640px){.lrow{grid-template-columns:1fr}.lrow .row{justify-content:flex-start}}
@@ -224,7 +225,7 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
   nav button.push{margin-left:0}
   main{padding-block:16px calc(96px + env(safe-area-inset-bottom,0px));gap:16px}
   .toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))}
-  input[type=text],input[type=date],select,textarea{font-size:16px;padding:10px 12px}
+  input[type=text],input[type=email],input[type=password],input[type=date],select,textarea{font-size:16px;padding:10px 12px}
   .btn{min-height:44px}
   .btn.small,.btn.ghost.small{min-height:40px}
   .icon{width:44px;height:44px;font-size:17px}
@@ -393,9 +394,9 @@ function randomLineup(m) {
 /* ---------- Supabase connection ---------- */
 const SB_URL = "https://httcvbpsrlhrfgxmeqbt.supabase.co";
 const SB_KEY = "sb_publishable_0Bg3NuYq58agSddJxfc71w_ZRJEAeoj"; // public key: safe to ship; access is enforced by the database
-const LOGIN_DOMAIN = "scratchsheet.app"; // admin usernames sign in as <username>@LOGIN_DOMAIN (no email is ever sent)
-const toEmail = u => `${String(u).trim().toLowerCase()}@${LOGIN_DOMAIN}`;
-const USERNAME_RE = /^[a-z0-9._-]{3,32}$/;
+const toEmail = u => String(u).trim().toLowerCase();
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const APP_URL = location.origin + location.pathname;
 let sb = null, chan = null;
 const errMsg = e => (e && (e.message || e.error_description)) || "Something went wrong. Check your connection and try again.";
 
@@ -524,8 +525,16 @@ async function signOut(msg) {
 
 async function boot() {
   if (!window.supabase?.createClient) { $("#app").innerHTML = `<header><h1>The Scratch Sheet</h1></header><main><div class="panel empty"><p>Couldn't load. Check your connection and reload the page.</p></div></main>`; return; }
-  sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { storage: window.sessionStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
+  const recovering = /type=recovery/.test(location.hash) || /type=recovery/.test(location.search);
+  sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { storage: window.sessionStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  sb.auth.onAuthStateChange(ev => { if (ev === "PASSWORD_RECOVERY") { S.phase = "recovery"; S.gate.msg = ""; render(); } });
   const { data } = await sb.auth.getSession();
+  if (location.hash.includes("access_token") || location.hash.includes("error")) {
+    const err = new URLSearchParams(location.hash.slice(1)).get("error_description");
+    history.replaceState(null, "", APP_URL);
+    if (err) S.gate.msg = err.includes("expired") ? "That link has expired. Ask for a new one." : err;
+  }
+  if (recovering && data?.session) { S.phase = "recovery"; return render(); }
   if (data?.session) return afterAuth();
   return showGate();
 }
@@ -884,12 +893,21 @@ function renderLayer() {
 function viewGate() {
   const g = S.gate, busyAttr = g.busy ? "disabled" : "";
   const msg = g.msg ? `<div class="notes"><div class="${g.ok ? "ok" : "e"}">${esc(g.msg)}</div></div>` : "";
-  if (S.teams && !S.hasLeague) return `
+  if (S.phase === "recovery") return `
+  <section class="panel gate">
+    <div><div class="eyebrow">Password reset</div><h2>Set a new password</h2></div>
+    ${msg}
+    <label class="f">New password<input type="password" id="rc-pass" autocomplete="new-password" placeholder="At least 8 characters"></label>
+    <label class="f">Confirm new password<input type="password" id="rc-pass2" autocomplete="new-password"></label>
+    <button class="btn primary" data-act="recover-save" ${busyAttr}>${g.busy ? "Saving…" : "Save password"}</button>
+  </section>`;
+  if (S.phase === "gate" && S.teams === null) return `<section class="panel gate"><p class="muted" style="margin:0">Loading…</p></section>`;
+  if (!S.hasLeague) return `
   <section class="panel gate">
     <div><div class="eyebrow">First-time setup</div><h2>Create the league admin</h2></div>
     <p class="small muted" style="margin:0">This is the one account that creates teams, sets team PINs and appoints other admins. You can't change who claims it later, so set it up yourself.</p>
     ${msg}
-    <label class="f">Username<input type="text" id="su-user" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="3–32 letters, numbers, . _ -"></label>
+    <label class="f">Your email<input type="email" id="su-user" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com"></label>
     <label class="f">Password<input type="password" id="su-pass" autocomplete="new-password" placeholder="At least 8 characters"></label>
     <label class="f">Confirm password<input type="password" id="su-pass2" autocomplete="new-password"></label>
     <button class="btn primary" data-act="gate-setup" ${busyAttr}>${g.busy ? "Setting up…" : "Create league admin"}</button>
@@ -907,10 +925,10 @@ function viewGate() {
       <button class="btn primary" data-act="gate-join" ${busyAttr}>${g.busy ? "Checking…" : "Enter"}</button>
       <p class="small muted" style="margin:0">Ask your captain for the team's 4-digit PIN. You'll need it again next time you open the app.</p>`
     : `
-      <label class="f">Username<input type="text" id="gate-user" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+      <label class="f">Email<input type="email" id="gate-user" autocomplete="email" autocapitalize="none" spellcheck="false"></label>
       <label class="f">Password<input type="password" id="gate-pass" autocomplete="current-password"></label>
       <button class="btn primary" data-act="gate-admin" ${busyAttr}>${g.busy ? "Signing in…" : "Sign in"}</button>
-      <p class="small muted" style="margin:0">For league and team admins. Forgot your password? Ask the league admin to reset it.</p>`}
+      <div class="row spread"><span class="small muted">For league and team admins.</span><button class="btn ghost small" data-act="gate-forgot">Forgot password?</button></div>`}
   </section>`;
 }
 
@@ -968,12 +986,12 @@ function viewLeague() {
       </div>`; }).join("")}
     <h3 style="margin-top:6px">Add an admin</h3>
     <div class="grid2">
-      <label class="f">Username<input type="text" id="na-user" class="w" autocapitalize="none" spellcheck="false" placeholder="e.g. jsmith"></label>
+      <label class="f">Email<input type="email" id="na-user" class="w" autocapitalize="none" spellcheck="false" placeholder="name@example.com"></label>
       <label class="f">Temporary password<input type="text" id="na-pass" class="w" autocomplete="off" placeholder="8+ characters"></label>
       <label class="f">Role<select id="na-role" class="w"><option value="">Choose a role</option><option value="league">League admin (all teams)</option>${teams.map(t => `<option value="team:${t.id}">Admin of ${esc(t.name)}</option>`).join("")}</select></label>
     </div>
     <div><button class="btn primary w" data-act="adm-add">Add admin</button></div>
-    <p class="small muted" style="margin:0">Give the new admin their username and temporary password. They can change it under Your account once they sign in.</p>
+    <p class="small muted" style="margin:0">Give the new admin their email and temporary password. They can change the password under Your account, or use "Forgot password?" on the sign-in screen.</p>
   </section>
 
   ${viewAccount()}`;
@@ -1015,25 +1033,44 @@ async function gateAction(a, b) {
   }
   if (a === "gate-admin") {
     const u = $("#gate-user").value.trim().toLowerCase(), p = $("#gate-pass").value;
-    if (!u || !p) return fail("Enter your username and password.");
+    if (!u || !p) return fail("Enter your email and password.");
     g.busy = true; g.msg = ""; render();
     await sb.auth.signOut().catch(() => {});
     const { error } = await sb.auth.signInWithPassword({ email: toEmail(u), password: p });
-    if (error) return fail(/invalid/i.test(errMsg(error)) ? "Wrong username or password." : errMsg(error));
-    const who = await sb.rpc("whoami");
-    if (!who.data?.admin) { await sb.auth.signOut(); return fail("That account isn't an admin anymore. Ask the league admin."); }
+    if (error) return fail(/invalid/i.test(errMsg(error)) ? "Wrong email or password." : /confirm/i.test(errMsg(error)) ? "Confirm your email first. Check your inbox for the link from Supabase." : errMsg(error));
+    let who = await sb.rpc("whoami");
+    if (!who.data?.admin && !S.hasLeague) { const c = await sb.rpc("claim_league_admin", { p_username: u }); if (!c.error) { S.view.tab = "league"; who = await sb.rpc("whoami"); } }
+    if (!who.data?.admin) { await sb.auth.signOut(); return fail("That account isn't an admin. Ask the league admin."); }
     g.busy = false; return afterAuth();
+  }
+  if (a === "gate-forgot") {
+    const u = $("#gate-user").value.trim().toLowerCase();
+    if (!EMAIL_RE.test(u)) return fail("Type your email above, then tap Forgot password.");
+    g.busy = true; g.msg = ""; render();
+    const { error } = await sb.auth.resetPasswordForEmail(u, { redirectTo: APP_URL });
+    g.busy = false;
+    if (error) return fail(/rate|seconds/i.test(errMsg(error)) ? "Too many reset emails. Wait a few minutes and try again." : errMsg(error));
+    g.ok = true; g.msg = "If that email belongs to an admin, a reset link is on its way. Open it on this device."; render(); g.ok = false; return true;
+  }
+  if (a === "recover-save") {
+    const p = $("#rc-pass").value, p2 = $("#rc-pass2").value;
+    if (p.length < 8) return fail("Use a password with at least 8 characters.");
+    if (p !== p2) return fail("The two passwords don't match.");
+    g.busy = true; render();
+    const { error } = await sb.auth.updateUser({ password: p });
+    if (error) return fail(errMsg(error));
+    g.busy = false; g.msg = ""; toast("Password saved"); return afterAuth();
   }
   if (a === "gate-setup") {
     const u = $("#su-user").value.trim().toLowerCase(), p = $("#su-pass").value, p2 = $("#su-pass2").value;
-    if (!USERNAME_RE.test(u)) return fail("Usernames are 3–32 characters: letters, numbers, dot, dash or underscore.");
+    if (!EMAIL_RE.test(u)) return fail("Enter a valid email address.");
     if (p.length < 8) return fail("Use a password with at least 8 characters.");
     if (p !== p2) return fail("The two passwords don't match.");
     g.busy = true; g.msg = ""; render();
     await sb.auth.signOut().catch(() => {});
     const r = await sb.auth.signUp({ email: toEmail(u), password: p });
     if (r.error) return fail(errMsg(r.error));
-    if (!r.data.session) return fail("Supabase is asking for email confirmation. Turn off \"Confirm email\" in Authentication settings, then try again.");
+    if (!r.data.session) { g.tab = "admin"; return fail("Check your email and tap the confirmation link, then sign in here with the Admin tab. Your league admin setup finishes on that first sign-in."); }
     const c = await sb.rpc("claim_league_admin", { p_username: u });
     if (c.error) { await sb.auth.signOut(); return fail(errMsg(c.error)); }
     g.busy = false; S.view.tab = "league"; return afterAuth();
@@ -1087,14 +1124,14 @@ async function leagueAction(a, b) {
   }
   if (a === "adm-add") {
     const u = $("#na-user").value.trim().toLowerCase(), p = $("#na-pass").value, role = $("#na-role").value;
-    if (!USERNAME_RE.test(u)) { toast("Usernames are 3–32 characters: letters, numbers, dot, dash or underscore."); return true; }
+    if (!EMAIL_RE.test(u)) { toast("Enter a valid email address."); return true; }
     if (p.length < 8) { toast("The temporary password needs at least 8 characters."); return true; }
     if (!role) { toast("Choose a role."); return true; }
-    if ((S.leagueAdmins || []).some(x => x.username === u)) { toast("That username is taken."); return true; }
+    if ((S.leagueAdmins || []).some(x => x.username === u)) { toast("That email is already an admin."); return true; }
     const mem = {}; const tmp = window.supabase.createClient(SB_URL, SB_KEY, { auth: { storage: { getItem: k => mem[k] ?? null, setItem: (k, v) => { mem[k] = v; }, removeItem: k => { delete mem[k]; } }, persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "ss-new-admin" } });
     const r = await tmp.auth.signUp({ email: toEmail(u), password: p });
-    if (r.error) { toast(/registered|exists/i.test(errMsg(r.error)) ? "That username is taken." : errMsg(r.error)); return true; }
-    if (!r.data.user?.id || !r.data.user.identities?.length) { toast("That username is taken."); return true; }
+    if (r.error) { toast(/registered|exists/i.test(errMsg(r.error)) ? "That email already has an account." : errMsg(r.error)); return true; }
+    if (!r.data.user?.id || !r.data.user.identities?.length) { toast("That email already has an account."); return true; }
     const [rl, team] = role.split(":");
     if (await rpc("add_admin", { p_user: r.data.user.id, p_username: u, p_role: rl, p_team: team || null }, `Added ${u}`)) { S.leagueAdmins = null; render(); }
     return true;
@@ -1252,7 +1289,7 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("focusout", e => { if (e.target.dataset?.field && e.target.type === "text") { clearTimeout(window._fo); window._fo = setTimeout(render, 300); } });
 document.addEventListener("keydown", e => {
-  if (e.key === "Enter" && S.phase === "gate") { const btn = $('[data-act^="gate-"].primary'); if (btn && !btn.disabled) { e.preventDefault(); btn.click(); } return; }
+  if (e.key === "Enter" && (S.phase === "gate" || S.phase === "recovery")) { const btn = $('[data-act^="gate-"].primary, [data-act="recover-save"]'); if (btn && !btn.disabled) { e.preventDefault(); btn.click(); } return; }
   if (e.key === "Escape" && S.ui.modal) { S.ui.modal = null; renderLayer(); }
   if (e.key === "Enter" && e.target.dataset?.enter === "add-player") $(`[data-act="add-player"][data-id="${e.target.dataset.id}"]`)?.click();
   if (e.key === "Enter" && e.target.dataset?.enter === "add-sub") $('[data-act="add-sub"]')?.click();
