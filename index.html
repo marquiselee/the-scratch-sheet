@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v28 2026-10-15: Header banner back to the green background (maroon-sided logo kept).
   v27 2026-10-15: Black header banner; maroon-sided logo (light outline) in the banner; icon links cache-busted so the new logo shows.
   v26 2026-10-15: Slim header banner on inside pages with the logo and full name; Exit / Sign out at its right.
   v25 2026-10-15: Chalk cube sides changed to maroon (top stays blue).
@@ -81,7 +82,7 @@ img{max-width:100%}
 input[type=password],input[type=email]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
 input.pin{font:600 22px/1 var(--f-mono);letter-spacing:.5em;text-align:center}
 input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
-#topbar{position:sticky;top:0;z-index:6;background:#0b0f0d;color:#ffffff;padding-top:env(safe-area-inset-top,0px)}
+#topbar{position:sticky;top:0;z-index:6;background:var(--cloth);color:var(--cloth-ink);padding-top:env(safe-area-inset-top,0px)}
 #topbar .tb{max-width:880px;margin:0 auto;min-height:48px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 #topbar .tb-id{display:flex;align-items:center;gap:10px;min-width:0;text-decoration:none;color:inherit}
 #topbar .tb-id img{width:26px;height:26px;flex:none}
@@ -635,7 +636,7 @@ function render() {
   app.className = "wrap" + (S.canWrite ? "" : " ro");
   if (S.phase === "app") {
     const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`;
-    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo-on-dark.svg?v=27" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span><button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
+    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg?v=27" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span><button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
     bar.hidden = false;
   } else { bar.hidden = true; bar.innerHTML = ""; }
   if (S.phase !== "app") {
