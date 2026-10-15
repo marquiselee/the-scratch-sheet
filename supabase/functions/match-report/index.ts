@@ -9,7 +9,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.9";
 
 const MODEL = Deno.env.get("REPORT_MODEL") || "claude-haiku-5-5";
-const MAX_WRITES_PER_MATCH = 6;   // first write + a few rewrites; protects the API bill
+const MAX_WRITES_PER_MATCH = 10;   // first write + a few rewrites; protects the API bill
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
