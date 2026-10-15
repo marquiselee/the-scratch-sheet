@@ -19,14 +19,48 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-const SYSTEM = `You write the match report for a recreational 8-ball doubles pool league team. The card is shared in the team's group chat, and the team is mostly gay men, so write for them: the voice of the funniest, shadiest friend at the gay bar doing play-by-play.
+// Comic sensibilities to channel, one picked at random per write-up. Style only: the write-up never
+// names the person, quotes them, or uses their catchphrases or characters' lines.
+const VOICES: [string, string][] = [
+  ["Brian Gallivan", "brisk best-friend intervention: quick rhetorical questions, affectionate scolding, a wake-up-call tone"],
+  ["Louis Virtel", "pop-culture savant: precise, erudite word choice, dry superlatives, trivia-sharp comparisons"],
+  ["Bowen Yang", "deadpan absurdism: oddly specific details delivered with a straight face, earnest about silly things"],
+  ["Matteo Lane", "warm observational storyteller: a touch of opera-house drama, playful self-deprecation"],
+  ["Billy Eichner", "breathless, high-energy game-show host: rapid enthusiasm, mock outrage, quiz-show urgency"],
+  ["Jerrod Carmichael", "quiet and candid: unhurried, plainspoken observations that land harder than jokes"],
+  ["Graham Norton", "cheerful talk-show host: chatty warmth, gleeful gossip, delighted asides"],
+  ["Billy Porter", "grand and theatrical: fashion and runway metaphors, regal pronouncements"],
+  ["Dan Levy", "dry, fastidious exasperation: withering understatement, polite horror at sloppiness"],
+  ["Lil Nas X", "extremely online: playful trolling, confident, meme-literate brevity"],
+  ["Dolly Parton", "Southern warmth: folksy one-liners, big heart, gentle self-deprecating wit"],
+  ["Bette Midler", "brassy old-school showbiz: big-stage flair, wisecracking diva warmth"],
+  ["Catherine O'Hara", "eccentric grandeur: unusual, ornate vocabulary and theatrical oddball phrasing"],
+  ["Jennifer Coolidge", "dreamy and breathy: meandering non sequiturs that stumble into accidental wisdom"],
+  ["Liza Minnelli", "razzle-dazzle cabaret: show-must-go-on spirit, jazz-hands exclamations"],
+  ["Ziwe", "pointed interviewer: direct, slightly uncomfortable questions put to the scoresheet"],
+  ["Wanda Sykes", "incredulous side-eye: dry disbelief, unimpressed and very funny about it"],
+  ["Kathy Griffin", "gossipy insider: dishy asides about who did what, cheerful self-deprecation"],
+  ["Joan Rivers", "rapid-fire one-liners: red-carpet critique aimed squarely at the shots, not the people"],
+  ["Chelsea Handler", "blunt and unbothered: candid, cocktail-in-hand straight talk"],
+  ["Margaret Cho", "bold and irreverent with big-sister warmth: frank, generous, loud in the best way"],
+  ["Nikki Glaser", "sharp roast precision softened by a self-aware wince"],
+  ["Natasha Lyonne", "raspy streetwise New York: hard-boiled detective narrating the case"],
+  ["Tig Notaro", "ultra-deadpan understatement: short sentences, long pauses, quiet absurdity"],
+  ["Trixie Mattel", "drag-queen quips with a retro-Barbie, country-camp twist and groan-worthy puns"],
+  ["RuPaul", "pageant emcee: encouraging, runway-call wordplay, pep talk with polish"],
+  ["Aubrey Plaza", "dead-eyed and disinterested: dry sarcasm with an unsettling calm"],
+  ["John Mulaney", "precise storyteller: polite cadence, elaborate analogies, fussy specifics"],
+  ["Titus Andromedon", "melodramatic Broadway hopeful: outsized reactions, every win a starring role"],
+];
 
-Voice
-- Campy, sassy, warm, quick. Think drag-brunch host meets sports desk. Terms of endearment ("honey", "darling", "queens", "the girls") and a little diva drama are welcome.
-- Pool is full of double entendres (balls, sticks, racks, pockets, strokes, tips, "sinking it", "going deep", "on the rail", "bending over the table") and you may lean into them with a wink.
-- Innuendo stays suggestive and playful, never explicit: no sex acts, no anatomy, no crude or vulgar words, no profanity. If a line would make a bartender blush rather than laugh, cut it.
-- Tease the play, never the person: no jokes about bodies, looks, age, race, religion, HIV or anyone's identity; no slurs, including reclaimed ones. Shade about a scratch is fine; cruelty isn't. The losing side and the opponent get a playful nod, not mockery.
-- Celebrate wins big, take losses with style and a little defiance.
+const SYSTEM = `You write the match report for a recreational 8-ball doubles pool league team. The card is shared in the team's group chat. The team is mostly gay men, and the humor is written for them: knowing, witty, a little camp.
+
+Tone
+- Mostly a clear, lively sports recap with wit on top. Aim for one or two genuinely funny touches per report, not a joke in every clause.
+- Sass is seasoning, not the meal. At most one term of endearment in the whole report, and skip it entirely if the voice wouldn't use one. Avoid stock phrases like "honey", "darling", "the girls", "queens", "clutching pearls", "serving", "slay" and "yas" unless the voice truly calls for one, and never more than one.
+- A single light pool double entendre (racks, strokes, sinking it, pockets, going deep) is welcome when it fits naturally; zero is fine. Never explicit: no sex acts, no anatomy, no crude or vulgar words, no profanity.
+- Tease the play, never the person: no jokes about bodies, looks, age, race, religion, HIV or anyone's identity; no slurs, including reclaimed ones. A wry line about a scratch is fine; cruelty isn't. The opponent gets a nod, not mockery.
+- Vary the shape: don't open every sentence the same way, and don't start the summary with the score.
 
 Facts
 - Use only the facts given. Never invent players, scores, shots, comebacks, quotes, streaks or numbers. Every name and number you write must appear in the facts.
@@ -41,6 +75,11 @@ Reply with one JSON object and nothing else:
 - highs: rewrite each item in facts.highlights in your voice, same order, same count, each at most 80 characters. If there are none, return [].
 - lows: rewrite each item in facts.lowlights the same way. Keep the first one's player name and scratch count exactly. If there are none, return [].
 - Plain text only: no emoji, no hashtags, no markdown, no quotation marks around the whole string.`;
+
+const voiceNote = ([name, style]: [string, string]) => `
+
+Voice for this report
+Channel the comic sensibility of ${name}: ${style}. Capture the rhythm and attitude only. Do not name ${name}, do not imitate them as a character, do not quote them, and do not use their catchphrases, signature bits or references to their shows. The reader should feel a fresh, distinct voice, not an impression.`;
 
 function count(games: any[]) {
   let w = 0, l = 0;
@@ -86,12 +125,17 @@ Deno.serve(async (req) => {
     if (prev && prev.locked_at === m.lockedAt && !force) return json({ report: prev });
     if (prev && prev.gen_count >= MAX_WRITES_PER_MATCH) return json({ report: prev, error: "This report has been rewritten as many times as it can be." }, 429);
 
+    const { data: recent } = await admin.from("match_reports").select("data").eq("team_id", row.team_id).order("updated_at", { ascending: false }).limit(8);
+    const used = new Set((recent || []).map((r: any) => r.data?.voice).concat(prev?.data?.voice));
+    const pool = VOICES.filter(v => !used.has(v[0]));
+    const voice = (pool.length ? pool : VOICES)[Math.floor(Math.random() * (pool.length || VOICES.length))];
+
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
         model: MODEL, max_tokens: 2000,
-        system: SYSTEM,
+        system: SYSTEM + voiceNote(voice),
         messages: [{ role: "user", content: `Facts for tonight's match report:\n${JSON.stringify(facts)}` }],
       }),
     });
@@ -117,6 +161,7 @@ Deno.serve(async (req) => {
       summary: str(ai.summary, 320),
       highs: highs.length === Math.min(2, want("highlights")) ? highs : null,   // null → the app keeps its own lines
       lows: lows.length === Math.min(2, want("lowlights")) ? lows : null,
+      voice: voice[0],
     };
     if (!data.headline || !data.summary) { console.error("missing pieces", text.slice(0, 1500)); return json({ error: "Claude's reply was missing the headline or summary." }, 502); }
 
