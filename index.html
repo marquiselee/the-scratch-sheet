@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v33 2026-10-15: "New match" buttons renamed "Add Match".
   v32 2026-10-15: Header cube removed (logo back in the banner); team name and record now sit above the league · season line.
   v31 2026-10-15: Logo moved from the banner to above the league · season line; team record shown as (W–L) beside the team name.
   v30 2026-10-15: Rules parser handles other rulebook layouts (Article/Section, decimal 1.1, ALL-CAPS or Markdown headings, bullets, (a)/(i) outlines); auto-built Contents with sections and topics; upload preview shows what was found.
@@ -759,9 +760,9 @@ function viewMatches(sid) {
   return `
   <section style="display:grid;gap:12px">
     <div class="row spread"><h2>${cur ? cur.title : "Next Match"}</h2></div>
-    ${cur ? cur.ms.map(currentCard).join("") : `<div class="panel empty"><p>No matches yet this season. Add one with its date and it shows up here.</p><button class="btn primary w" data-act="new-match">New match</button></div>`}
+    ${cur ? cur.ms.map(currentCard).join("") : `<div class="panel empty"><p>No matches yet this season. Add one with its date and it shows up here.</p><button class="btn primary w" data-act="new-match">Add Match</button></div>`}
   </section>
-  <div class="row spread"><h2>Matches</h2><button class="btn primary w" data-act="new-match">New match</button></div>
+  <div class="row spread"><h2>Matches</h2><button class="btn primary w" data-act="new-match">Add Match</button></div>
   ${list.length ? `<div class="mlist">${cards}</div>` : `<div class="panel empty"><p>No matches yet this season. Add one to pick who's playing and draw the pairings.</p></div>`}`;
 }
 
