@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v29 2026-10-15: Rules tab reflows uploaded text (no hard line breaks), shows sections and outline levels with hanging labels, a section jump list, and in-browser search with highlighted matches.
   v28 2026-10-15: Header banner back to the green background (maroon-sided logo kept).
   v27 2026-10-15: Black header banner; maroon-sided logo (light outline) in the banner; icon links cache-busted so the new logo shows.
   v26 2026-10-15: Slim header banner on inside pages with the logo and full name; Exit / Sign out at its right.
@@ -243,10 +244,25 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
 .lockbar .msg{display:grid;gap:2px;min-width:0;flex:1 1 260px}
 .lock-ico{display:inline-block;width:12px;height:10px;border:2px solid currentColor;border-radius:2px;position:relative;margin-right:6px;top:1px}
 .lock-ico::before{content:"";position:absolute;left:1px;top:-8px;width:6px;height:6px;border:2px solid currentColor;border-bottom:0;border-radius:5px 5px 0 0}
-.rules{max-width:70ch;display:grid;gap:12px;font-size:15px;line-height:1.6}
-.rules p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
-.rules h3{font:700 20px/1.2 var(--f-display);text-transform:uppercase;letter-spacing:.02em;margin-top:8px}
-.rules ul{margin:0;padding-left:1.2em}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.rules-search{display:flex;flex-wrap:wrap;align-items:center;gap:8px;position:sticky;top:calc(48px + env(safe-area-inset-top,0px));z-index:2;background:var(--surface);padding-block:4px}
+.rules-search input{flex:1 1 240px;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:10px 16px}
+.rules-search input:focus-visible{outline:2px solid var(--chalk);outline-offset:2px}
+.rules-toc{display:flex;flex-wrap:wrap;gap:6px}
+.rules-toc .chip{font-size:13px;min-height:34px;padding:6px 12px;cursor:pointer;color:var(--ink)}
+.rules{max-width:72ch;display:grid;gap:10px;font-size:16px;line-height:1.6;overflow-wrap:break-word;scroll-margin-top:120px}
+.rules p{margin:0}
+.rules .rule-p:first-child{font-weight:600}
+.rules .rule-h{font:800 22px/1.2 var(--f-display);text-transform:uppercase;letter-spacing:.02em;margin:14px 0 2px;scroll-margin-top:120px;display:flex;gap:8px}
+.rules .rule-h:first-child{margin-top:0}
+.rules .rule-num{color:var(--chalk)}
+.rules .rule{display:grid;grid-template-columns:2em minmax(0,1fr);gap:4px;align-items:baseline}
+.rules .rule-lbl{font:600 13px var(--f-mono);color:var(--muted)}
+.rules .lvl2{margin-left:1.6em}
+.rules .lvl3{margin-left:3.2em}
+.rules .ctx{opacity:.6}
+.rules mark{background:#f6dd7a;color:#16211b;border-radius:3px;padding:0 1px}
+@media (max-width:640px){.rules{font-size:15.5px}.rules .lvl2{margin-left:.9em}.rules .lvl3{margin-left:1.8em}.rules .rule{grid-template-columns:1.8em minmax(0,1fr)}}
 @media (max-width:560px){
   .game{grid-template-columns:auto minmax(0,1fr)}
   .gside{grid-column:1/-1;grid-auto-flow:column;justify-content:space-between;align-items:center}
@@ -631,7 +647,7 @@ async function boot() {
 
 /* ---------- render ---------- */
 function render() {
-  const act = document.activeElement, keep = act && act.id ? { id: act.id, val: act.value, s: act.selectionStart, e: act.selectionEnd, text: act.matches("input[type=text],textarea") } : null;
+  const act = document.activeElement, keep = act && act.id ? { id: act.id, val: act.value, s: act.selectionStart, e: act.selectionEnd, text: act.matches("input[type=text],input[type=search],textarea") } : null;
   const app = $("#app"), bar = $("#topbar");
   app.className = "wrap" + (S.canWrite ? "" : " ro");
   if (S.phase === "app") {
@@ -845,22 +861,139 @@ function lockBar(id, m) {
   return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Locked${when ? " " + esc(when) : ""}</b><span class="small muted">Lineup, results and comments are read-only. Unlocking takes two confirmations.</span></div><button class="btn w" data-act="unlock-start">Unlock…</button></div>`;
 }
 
-function rulesHtml(text) {
-  return text.replace(/\r\n?/g, "\n").split(/\n\s*\n/).map(b => b.trim()).filter(Boolean).map(b => {
-    const h = b.match(/^#{1,4}\s+(.+)$/);
-    if (h && !b.includes("\n")) return `<h3>${esc(h[1])}</h3>`;
-    const lines = b.split("\n");
-    if (lines.every(l => /^\s*[-*•]\s+/.test(l))) return `<ul>${lines.map(l => `<li>${esc(l.replace(/^\s*[-*•]\s+/, ""))}</li>`).join("")}</ul>`;
-    return `<p>${esc(b)}</p>`;
-  }).join("");
+/* ---------- rules: reflow + search (all in the browser) ---------- */
+// Turns raw rulebook text (often PDF-extracted, with hard line wraps) into structured blocks:
+// section headings (I., II., # Heading), outline items (A., 1., a), bullets) and paragraphs.
+const ROMAN = /^(?:M{0,3})(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/;
+let rulesCache = { text: null, blocks: [] };
+function parseRules(text) {
+  if (rulesCache.text === text) return rulesCache.blocks;
+  const lines = String(text || "").replace(/\r\n?/g, "\n").replace(/\f/g, "\n").split("\n").map(l => l.replace(/[ \t ]+/g, " ").trim());
+  const blocks = []; let cur = null, lastLetter = 0, sec = 0;
+  const marker = l => {
+    let m, hashed = false;
+    if ((m = l.match(/^#{1,4}\s+(.*)$/))) { l = m[1]; hashed = true; }
+    if ((m = l.match(/^([IVXLC]{1,6})\.\s+(\S.*)$/)) && ROMAN.test(m[1])) {
+      const asLetter = m[1].length === 1 && lastLetter && m[1].charCodeAt(0) === lastLetter + 1;
+      if (!asLetter) return { kind: "h", label: m[1] + ".", text: m[2] };
+    }
+    if ((m = l.match(/^([A-Z])\.\s+(\S.*)$/))) return { kind: "item", level: 1, label: m[1] + ".", text: m[2], letter: m[1].charCodeAt(0) };
+    if ((m = l.match(/^(\d{1,2})[.)]\s+(\S.*)$/))) return { kind: "item", level: 2, label: m[1] + ".", text: m[2] };
+    if ((m = l.match(/^\(?([a-z])\)\s+(\S.*)$/))) return { kind: "item", level: 3, label: m[1] + ")", text: m[2] };
+    if ((m = l.match(/^[-*•●▪]\s+(\S.*)$/))) return { kind: "item", level: 3, label: "•", text: m[1] };
+    if (hashed) return { kind: "h", label: "", text: l };
+    return null;
+  };
+  const push = () => { if (cur && cur.text.trim()) blocks.push(cur); cur = null; };
+  let blank = false;
+  for (const raw of lines) {
+    if (!raw) { blank = true; continue; }
+    if (/^\d{1,3}$/.test(raw) || /^page \d+( of \d+)?$/i.test(raw)) continue; // page numbers
+    let mk = marker(raw);
+    // "E. pair's names…" after a sentence that didn't finish is a wrapped line, not a new item
+    if (mk && mk.kind === "item" && mk.level <= 2 && /^[a-z]/.test(mk.text) && cur && !/[.:;!?”")]$/.test(cur.text)) mk = null;
+    if (mk) {
+      push();
+      if (mk.kind === "h") { sec++; lastLetter = 0; cur = { type: "h", label: mk.label, text: mk.text, sec }; }
+      else { if (mk.letter) lastLetter = mk.letter; cur = { type: "item", level: mk.level, label: mk.label, text: mk.text, sec }; }
+    } else if (!cur || (blank && cur.type !== "item") || cur.type === "h" && blank) {
+      push(); cur = { type: "p", text: raw, sec };
+    } else {
+      // continuation of a wrapped line
+      cur.text = /[A-Za-z]-$/.test(cur.text) && /^[a-z]/.test(raw) ? cur.text.slice(0, -1) + raw : cur.text + " " + raw;
+    }
+    blank = false;
+  }
+  push();
+  // split items that swallowed the next numbered item ("... turn. 2. The 8-ball ...")
+  const out = [];
+  for (const b of blocks) {
+    if (b.type !== "h") {
+      const parts = b.text.split(/(?<=[.:;!?”"])\s+(?=\d{1,2}\.\s+[A-Z])/);
+      if (parts.length > 1) {
+        out.push({ ...b, text: parts[0] });
+        parts.slice(1).forEach(p => { const m = p.match(/^(\d{1,2})\.\s+(.*)$/); out.push({ type: "item", level: 2, label: m[1] + ".", text: m[2], sec: b.sec }); });
+        continue;
+      }
+    }
+    out.push(b);
+  }
+  // headings that are really one long wrapped line of title text stay headings; join "E. pair's" style stray letters
+  out.forEach((b, i) => { b.i = i; b.lower = (b.label ? b.label + " " : "") + b.text.toLowerCase(); });
+  rulesCache = { text, blocks: out };
+  return out;
+}
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function hl(text, terms) {
+  if (!terms.length) return esc(text);
+  const ranges = [], low = text.toLowerCase();
+  for (const t of terms) { let i = 0; while ((i = low.indexOf(t, i)) !== -1) { ranges.push([i, i + t.length]); i += t.length; } }
+  if (!ranges.length) return esc(text);
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [ranges[0]];
+  for (const r of ranges.slice(1)) { const m = merged[merged.length - 1]; if (r[0] <= m[1]) m[1] = Math.max(m[1], r[1]); else merged.push(r); }
+  let out = "", at = 0;
+  for (const [a, b] of merged) { out += esc(text.slice(at, a)) + "<mark>" + esc(text.slice(a, b)) + "</mark>"; at = b; }
+  return out + esc(text.slice(at));
+}
+function rulesQueryTerms(q) {
+  return String(q || "").toLowerCase().replace(/["“”]/g, " ").split(/\s+/).map(t => t.replace(/^[^\w-]+|[^\w-]+$/g, "")).filter(t => t.length > 0);
+}
+function rulesBody() {
+  const blocks = parseRules(S.rules.text), q = S.ui.rulesQ || "", terms = rulesQueryTerms(q);
+  const blockHtml = (b, dim) => {
+    if (b.type === "h") return `<h3 id="rule-sec-${b.sec}" class="rule-h${dim ? " ctx" : ""}">${b.label ? `<span class="rule-num">${esc(b.label)}</span> ` : ""}${hl(b.text, terms)}</h3>`;
+    if (b.type === "p") return `<p class="rule-p${dim ? " ctx" : ""}">${hl(b.text, terms)}</p>`;
+    return `<div class="rule lvl${b.level}${dim ? " ctx" : ""}"><span class="rule-lbl">${esc(b.label)}</span><span class="rule-txt">${hl(b.text, terms)}</span></div>`;
+  };
+  if (!terms.length) return blocks.map(b => blockHtml(b, false)).join("");
+  // matching blocks, plus their section heading and parent items for context
+  const show = new Map();
+  blocks.forEach((b, i) => {
+    if (!terms.every(t => b.lower.includes(t) || b.text.toLowerCase().includes(t))) return;
+    show.set(i, false);
+    let need = b.type === "item" ? b.level : 99;
+    for (let j = i - 1; j >= 0 && need > 0; j--) {
+      const p = blocks[j];
+      if (p.type === "h") { if (!show.has(j)) show.set(j, true); break; }
+      if (p.type === "item" && p.level < need) { if (!show.has(j)) show.set(j, true); need = p.level; }
+    }
+  });
+  const hits = [...show.values()].filter(v => !v).length;
+  S.ui.rulesHits = hits;
+  if (!hits) return `<p class="muted" style="margin:0">No rules mention “${esc(q.trim())}”. Try fewer or different words, like <i>sub</i>, <i>forfeit</i> or <i>8-ball</i>.</p>`;
+  return [...show.keys()].sort((a, b) => a - b).map(i => blockHtml(blocks[i], show.get(i))).join("");
+}
+function rulesSections() {
+  return parseRules(S.rules.text).filter(b => b.type === "h" && b.label);
+}
+function updateRulesResults() {
+  const box = $("#rules-body"); if (!box) return render();
+  S.ui.rulesHits = null;
+  box.innerHTML = rulesBody();
+  const terms = rulesQueryTerms(S.ui.rulesQ);
+  const c = $("#rules-count"); if (c) c.textContent = terms.length ? `${S.ui.rulesHits || 0} match${S.ui.rulesHits === 1 ? "" : "es"}` : "";
+  const toc = $("#rules-toc"); if (toc) toc.hidden = !!terms.length;
+  const clr = $("#rules-q-clear"); if (clr) clr.hidden = !terms.length;
 }
 
 function viewRules() {
   const r = S.rules, d = S.ui.draft, armed = S.ui.armed === "rules-post";
   const upd = r.updated ? new Date(r.updated).toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" }) : "";
+  S.ui.rulesHits = null;
+  const body = r.text ? rulesBody() : "", qn = rulesQueryTerms(S.ui.rulesQ).length, hits = S.ui.rulesHits || 0;
   return `
   <div class="row spread"><h2>League rules</h2>${r.text ? `<span class="small muted">Posted ${esc(upd)}${r.fileName ? " from " + esc(r.fileName) : ""}</span>` : ""}</div>
-  ${r.text ? `<section class="panel"><div class="rules">${rulesHtml(r.text)}</div></section>`
+  ${r.text ? `<section class="panel rules-panel">
+    <div class="rules-search">
+      <label for="rules-q" class="sr">Search the rules</label>
+      <input type="search" id="rules-q" data-field="rules-q" placeholder="Search the rules, e.g. forfeit" value="${esc(S.ui.rulesQ || "")}" autocomplete="off" enterkeyhint="search">
+      <button class="btn ghost small" id="rules-q-clear" data-act="rules-q-clear" ${rulesQueryTerms(S.ui.rulesQ).length ? "" : "hidden"}>Clear</button>
+      <span id="rules-count" class="small muted" aria-live="polite">${qn ? `${hits} match${hits === 1 ? "" : "es"}` : ""}</span>
+    </div>
+    ${rulesSections().length > 1 ? `<div id="rules-toc" class="rules-toc" role="navigation" aria-label="Rule sections" ${rulesQueryTerms(S.ui.rulesQ).length ? "hidden" : ""}>${rulesSections().map(h => `<button class="chip" data-act="rules-jump" data-v="${h.sec}">${esc(h.label)} ${esc(h.text)}</button>`).join("")}</div>` : ""}
+    <div class="rules" id="rules-body">${body}</div>
+  </section>`
     : `<div class="panel empty"><p>No rules posted yet. Upload the league rulebook below so the whole team can read it here.</p></div>`}
   ${canLeague(S.leagueId) ? `<section class="panel">
     <h3>${r.text ? "Replace posted rules" : "Post rules"}</h3>
@@ -1442,6 +1575,8 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b || b.tagName === "SELECT" || b.type === "checkbox") return;
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
+  if (a === "rules-q-clear") { S.ui.rulesQ = ""; const el = $("#rules-q"); if (el) { el.value = ""; el.focus(); } updateRulesResults(); return; }
+  if (a === "rules-jump") { document.getElementById("rule-sec-" + b.dataset.v)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
   if (a === "sort") {
     const t = b.dataset.t, k = b.dataset.k, cur = (S.ui.sort ||= {})[t];
     S.ui.sort[t] = cur && cur.k === k ? { k, dir: cur.dir === "asc" ? "desc" : "asc" } : { k, dir: k === "name" ? "asc" : "desc" };
@@ -1578,6 +1713,7 @@ document.addEventListener("change", e => {
 document.addEventListener("input", e => {
   const t = e.target, f = t.dataset.field; if (!f || !S.canWrite) return;
   if (f === "league-name") { saveLeagueName(t.value); return; }
+  if (f === "rules-q") { S.ui.rulesQ = t.value; clearTimeout(window._rq); window._rq = setTimeout(updateRulesResults, 120); return; }
   if (f === "rules-draft") { S.ui.draft = { text: t.value, fileName: S.ui.draft?.fileName || "" }; const btn = $('[data-act="rules-post"]'); if (btn) btn.disabled = !t.value.trim(); return; }
   if ((f === "opponent" || f === "opp") && S.matches[S.view.matchId]?.locked) return;
   if (f === "opponent") { const m = S.matches[S.view.matchId]; m.opponent = t.value; persist("matches", S.view.matchId); }
