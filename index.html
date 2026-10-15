@@ -7,6 +7,7 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v21 2026-10-14: Stats tables sort by any column (tap the heading; tap again to reverse). Players default to win % then name.
   v20 2026-10-14: Stats: "Errors / game" average replaces Error %.
   v19 2026-10-14: "Exit" replaces "Leave"; scratch pop-up shows each player's running count for the game and has "Log & add another" for repeat scratches.
   v18 2026-10-14: Current match heading reads Today's Match / Next Match / Last Match; full date on the card; Log scratch stays beside each match on phones.
@@ -166,6 +167,9 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 th,td{padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
 th:first-child,td:first-child{text-align:left}
+th .sort{all:unset;cursor:pointer;font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;white-space:nowrap}
+th .sort.on{color:var(--ink)}
+th .sort:focus-visible{outline:2px solid var(--chalk);outline-offset:2px}
 th{font:500 11px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 /* admin */
 .season{border:1px solid var(--line);border-radius:var(--r);background:var(--bg);padding:12px;display:grid;gap:12px}
@@ -827,14 +831,34 @@ function viewRules() {
   </section>` : ""}`;
 }
 
+/* sortable tables: S.ui.sort[table] = { k, dir } */
+function sortRows(table, rows, cols, def) {
+  const st = (S.ui.sort ||= {})[table] || def, col = cols[st.k] || cols[def.k];
+  const name = r => (r._name || "").toLowerCase();
+  const val = r => col.v(r);
+  return rows.slice().sort((a, b) => {
+    const va = val(a), vb = val(b);
+    let c = typeof va === "string" ? va.localeCompare(vb) : (va ?? -1) - (vb ?? -1);
+    if (st.dir === "desc") c = -c;
+    return c || name(a).localeCompare(name(b));
+  });
+}
+function th(table, k, label, def, title) {
+  const st = (S.ui.sort ||= {})[table] || def, on = st.k === k;
+  return `<th${title ? ` title="${title}"` : ""} aria-sort="${on ? (st.dir === "asc" ? "ascending" : "descending") : "none"}"><button class="sort ${on ? "on" : ""}" data-act="sort" data-t="${table}" data-k="${k}">${label}${on ? (st.dir === "asc" ? " ▲" : " ▼") : ""}</button></th>`;
+}
+
 function scratchStats(sid, ms) {
   const s = S.seasons[sid], rows = {}, tot = { table: 0, pocket: 0, off: 0, eight: 0 };
   ms.forEach(m => (m.scratches || []).forEach(x => { const r = rows[x.player] ||= { table: 0, pocket: 0, off: 0, eight: 0 }; r[x.type]++; tot[x.type]++; }));
   const ids = [...new Set([...activePlayers(s).map(p => p.id), ...Object.keys(rows).filter(id => (s.players || []).some(p => p.id === id))])];
   const sum = r => r.table + r.pocket + r.off + r.eight, z = { table: 0, pocket: 0, off: 0, eight: 0 };
-  const list = ids.map(id => ({ id, ...(rows[id] || z) })).sort((a, b) => sum(b) - sum(a));
+  const SD = { k: "total", dir: "desc" };
+  const list = sortRows("scr", ids.map(id => ({ id, _name: pName(sid, id), ...(rows[id] || z) })), {
+    name: { v: r => r._name.toLowerCase() }, table: { v: r => r.table }, pocket: { v: r => r.pocket }, off: { v: r => r.off }, eight: { v: r => r.eight }, total: { v: r => sum(r) },
+  }, SD);
   return `<section class="panel"><h3>Scratches</h3>
-    <div class="tbl"><table><thead><tr><th>Player</th><th title="Complete miss, bad hit, no rail">Table</th><th>Pocket</th><th>Off table</th><th title="Scratch on the 8 or premature 8">8-ball</th><th>Total</th></tr></thead><tbody>
+    <div class="tbl"><table><thead><tr>${th("scr", "name", "Player", SD)}${th("scr", "table", "Table", SD, "Complete miss, bad hit, no rail")}${th("scr", "pocket", "Pocket", SD)}${th("scr", "off", "Off table", SD)}${th("scr", "eight", "8-ball", SD, "Scratch on the 8 or premature 8")}${th("scr", "total", "Total", SD)}</tr></thead><tbody>
     ${list.map(r => `<tr><td>${esc(pName(sid, r.id))}</td><td>${r.table}</td><td>${r.pocket}</td><td>${r.off}</td><td>${r.eight}</td><td><b>${sum(r)}</b></td></tr>`).join("") || `<tr><td colspan="6" class="muted">No players yet.</td></tr>`}
     ${list.length ? `<tr><td class="muted">Team total</td><td>${tot.table}</td><td>${tot.pocket}</td><td>${tot.off}</td><td>${tot.eight}</td><td><b>${sum(tot)}</b></td></tr>` : ""}
     </tbody></table></div>
@@ -852,7 +876,11 @@ function viewStandings(sid) {
     (m.scratches || []).forEach(x => row(x.player).err++);
     m.games.forEach(g => [...new Set(g.p.filter(Boolean))].forEach(id => { const r = row(id); if (g.result) { r.gp++; r[g.result === "W" ? "w" : "l"]++; } }));
   });
-  const rows = Object.values(stats).filter(r => (s.players || []).some(p => p.id === r.id)).sort((a, b) => (b.gp ? b.w / b.gp : -1) - (a.gp ? a.w / a.gp : -1) || b.w - a.w);
+  const PD = { k: "win", dir: "desc" };
+  const rows = sortRows("players", Object.values(stats).filter(r => (s.players || []).some(p => p.id === r.id)).map(r => ({ ...r, _name: pName(sid, r.id) })), {
+    name: { v: r => r._name.toLowerCase() }, nights: { v: r => r.nights }, gp: { v: r => r.gp }, w: { v: r => r.w }, l: { v: r => r.l },
+    win: { v: r => r.gp ? r.w / r.gp : null }, err: { v: r => r.err }, epg: { v: r => r.gp ? r.err / r.gp : null },
+  }, PD);
   const res = ms.map(m => ({ m, sc: score(m) }));
   const W = res.filter(x => x.sc.res === "W").length, L = res.filter(x => x.sc.res === "L").length, T = res.filter(x => x.sc.res === "T").length;
   const gw = res.reduce((a, x) => a + x.sc.w, 0), gl = res.reduce((a, x) => a + x.sc.l, 0);
@@ -863,7 +891,7 @@ function viewStandings(sid) {
     <div class="panel"><div class="eyebrow">Games</div><div class="score"><b>${gw}–${gl}</b><span class="muted small">${gw + gl ? Math.round(gw / (gw + gl) * 100) + "% won · breaks ties in league standings" : ""}</span></div></div>
   </div>
   <section class="panel"><h3>Players</h3>
-    <div class="tbl"><table><thead><tr><th>Player</th><th>Matches</th><th>Games</th><th>W</th><th>L</th><th>Win %</th><th title="Scratches of any type">Errors</th><th title="Average errors per game played">Errors / game</th></tr></thead><tbody>
+    <div class="tbl"><table><thead><tr>${th("players", "name", "Player", PD)}${th("players", "nights", "Matches", PD)}${th("players", "gp", "Games", PD)}${th("players", "w", "W", PD)}${th("players", "l", "L", PD)}${th("players", "win", "Win %", PD)}${th("players", "err", "Errors", PD, "Scratches of any type")}${th("players", "epg", "Errors / game", PD, "Average errors per game played")}</tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(pName(sid, r.id))}</td><td>${r.nights}</td><td>${r.gp}</td><td>${r.w}</td><td>${r.l}</td><td>${r.gp ? Math.round(r.w / r.gp * 100) + "%" : "—"}</td><td>${r.err}</td><td>${r.gp ? (r.err / r.gp).toFixed(2) : "—"}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">No players yet.</td></tr>`}
     </tbody></table></div>
     <p class="small muted" style="margin:0">Matches counts nights a player was marked as playing. Games count only games with a recorded result. Errors are scratches of any type. Errors / game is the average number of errors per game played.</p>
@@ -1370,6 +1398,11 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b || b.tagName === "SELECT" || b.type === "checkbox") return;
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
+  if (a === "sort") {
+    const t = b.dataset.t, k = b.dataset.k, cur = (S.ui.sort ||= {})[t];
+    S.ui.sort[t] = cur && cur.k === k ? { k, dir: cur.dir === "asc" ? "desc" : "asc" } : { k, dir: k === "name" ? "asc" : "desc" };
+    render(); return;
+  }
   if (a === "sign-out") { signOut(); return; }
   if (/^(team-|adm-|my-pass$|season-(view|current|del|add|rename-open|rename-save)$|league-(create|del)$)/.test(a)) { if (a === "my-pass" || isLeagueRole()) leagueAction(a, b); return; }
   if (a === "pin-set") {
