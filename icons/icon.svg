@@ -3,8 +3,8 @@
   <g transform="translate(14 14) scale(0.7667)">
     <g stroke="#16211b" stroke-width="5" stroke-linejoin="round">
       <path d="M60 14 L104 38 L60 62 L16 38 Z" fill="#7bb8e6"/>
-      <path d="M16 38 L60 62 L60 108 L16 84 Z" fill="#2a78b0"/>
-      <path d="M60 62 L104 38 L104 84 L60 108 Z" fill="#1b5584"/>
+      <path d="M16 38 L60 62 L60 108 L16 84 Z" fill="#8c2a3c"/>
+      <path d="M60 62 L104 38 L104 84 L60 108 Z" fill="#5c1a27"/>
     </g>
     <ellipse cx="60" cy="38" rx="17" ry="9" fill="#2a78b0"/>
   </g>
