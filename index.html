@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
-  v47 2026-10-15: Team city on the Team tab (migration 006), sent with match facts for local color and weather.
+  v47 2026-10-15: League city on the League tab (migration 006), sent with match facts for local color and weather.
   v46 2026-10-15: Report write-up failures now show a message with the reason instead of failing silently.
   v45 2026-10-15: Claude writes each locked match's headline, summary, highlights and lowlights (match-report Edge Function, match_reports table). The app's own lines stay as the fallback.
   v44 2026-10-15: Hot hand / Bright spot now scored on wins, big games (clinchers, stay-alive wins, deciders), scratches and win streaks carried over from earlier weeks.
@@ -557,9 +557,8 @@ async function flush(coll, id) {
   let r;
   try {
     if (coll === "config" && id === "team") {
-      const name = (S.team.name || "").trim(), upd = S.team.hasCity ? { city: (S.team.city || "").trim().slice(0, 80) } : {};
-      if (name) upd.name = name;
-      r = Object.keys(upd).length ? await sb.from("teams").update(upd).eq("id", S.teamId) : { error: null };
+      const name = (S.team.name || "").trim();
+      r = name ? await sb.from("teams").update({ name }).eq("id", S.teamId) : { error: null };
     } else if (coll === "config" && id === "rules") {
       r = await sb.from("leagues").update({ rules_text: S.rules.text, rules_file: S.rules.fileName || "", rules_updated: S.rules.updated ? new Date(S.rules.updated).toISOString() : null }).eq("id", S.leagueId);
     } else if (coll === "seasons") {
@@ -615,17 +614,17 @@ async function loadTeam(teamId) {
   if (repChan) { sb.removeChannel(repChan); repChan = null; }
   S.teamId = teamId; S.seasons = {}; S.matches = {}; S.reports = {}; S.view.matchId = null;
   S.loaded = { team: false, seasons: false, matches: false, rules: false }; render();
-  const t = await sb.from("teams").select("*").eq("id", teamId).maybeSingle();   // * so it works before and after migration 006 (city)
+  const t = await sb.from("teams").select("id,name,league_id").eq("id", teamId).maybeSingle();
   if (!t.data) return signOut(S.role === "member" ? "Your team session ended. Enter the PIN again." : "That team isn't available.");
   S.leagueId = t.data.league_id;
   const [lg, ma] = await Promise.all([
-    sb.from("leagues").select("id,name,current_season_id,rules_text,rules_file,rules_updated").eq("id", S.leagueId).maybeSingle(),
+    sb.from("leagues").select("*").eq("id", S.leagueId).maybeSingle(),   // * so it works before and after migration 006 (city)
     sb.from("matches").select("id,data").eq("team_id", teamId),
   ]);
   (ma.data || []).forEach(r => S.matches[r.id] = r.data);
   sb.from("match_reports").select("match_id,locked_at,data").eq("team_id", teamId).then(({ data }) => { (data || []).forEach(r => S.reports[r.match_id] = r); if (data?.length) { render(); renderReport(); } });
   S.league = lg.data || { name: "", current_season_id: null };
-  S.team = { name: t.data.name, city: t.data.city || "", hasCity: "city" in t.data, activeSeasonId: S.league.current_season_id || "" };
+  S.team = { name: t.data.name, activeSeasonId: S.league.current_season_id || "" };
   S.rules = rulesFrom(lg.data);
   await loadSeasons();
   try { S.view.seasonId = localStorage.getItem("ss-season-" + teamId) || null; } catch (e) {}
@@ -644,7 +643,7 @@ async function loadTeam(teamId) {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "season_teams" }, reSeasons)
     .on("postgres_changes", { event: "*", schema: "public", table: "league_seasons", filter: `league_id=eq.${S.leagueId}` }, reSeasons)
-    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "teams", filter: `id=eq.${teamId}` }, p => { if (!busy("config/team")) { S.team.name = p.new.name; if ("city" in p.new) { S.team.city = p.new.city || ""; S.team.hasCity = true; } render(); } })
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "teams", filter: `id=eq.${teamId}` }, p => { if (!busy("config/team")) { S.team.name = p.new.name; render(); } })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "leagues", filter: `id=eq.${S.leagueId}` }, p => {
       S.league = { ...S.league, ...p.new }; S.team.activeSeasonId = p.new.current_season_id || "";
       if (!busy("config/rules")) S.rules = rulesFrom(p.new);
@@ -1268,7 +1267,6 @@ function viewAdmin() {
   <h2>Team admin</h2>
   <section class="panel">
     <label class="f">Team name<input type="text" id="team-name" class="w" data-field="team-name" placeholder="e.g. Corner Pocket Crew" value="${esc(S.team.name)}"></label>
-    ${S.team.hasCity ? `<label class="f">City<input type="text" id="team-city" class="w" data-field="team-city" maxlength="80" placeholder="e.g. Philadelphia, PA" value="${esc(S.team.city || "")}"><span class="small muted">Gives match reports local color and match-day weather.</span></label>` : ""}
   </section>
   ${viewTeamPin()}
   <h3>Rosters</h3>
@@ -1400,7 +1398,7 @@ async function loadMgr(leagueId) {
   if (!leagueId) { S.mgr.data = { seasons: [], teams: [], st: [], league: null }; return render(); }
   if (S.mgr.loading === leagueId) return; S.mgr.loading = leagueId;
   const [lg, ls, tm] = await Promise.all([
-    sb.from("leagues").select("id,name,current_season_id").eq("id", leagueId).maybeSingle(),
+    sb.from("leagues").select("id,name,current_season_id,city").eq("id", leagueId).maybeSingle().then(r => r.error ? sb.from("leagues").select("id,name,current_season_id").eq("id", leagueId).maybeSingle() : r),
     sb.from("league_seasons").select("id,name,created_at").eq("league_id", leagueId).order("created_at"),
     sb.from("teams").select("id,name,created_at").eq("league_id", leagueId).order("name"),
   ]);
@@ -1456,6 +1454,7 @@ function viewLeague() {
   ${!lid ? `<div class="panel empty"><p>No leagues yet. Create the first one below.</p></div>` : !ready ? `<div class="panel"><p class="muted" style="margin:0">Loading league…</p></div>` : `
   <section class="panel">
     <label class="f">League name<input type="text" id="lg-name-${lid}" class="w" data-field="league-name" value="${esc(d.league.name)}"></label>
+    ${"city" in d.league ? `<label class="f">City<input type="text" id="lg-city-${lid}" class="w" data-field="league-city" maxlength="80" placeholder="e.g. Philadelphia, PA" value="${esc(d.league.city || "")}"><span class="small muted">Gives match reports local color and match-day weather.</span></label>` : ""}
   </section>
 
   <section class="panel">
@@ -1738,6 +1737,18 @@ async function changeAdminRole(sel) {
   S.leagueAdmins = null; render();
 }
 let leagueNameTimer = null;
+let leagueCityTimer = null;
+function saveLeagueCity(v) {
+  clearTimeout(leagueCityTimer);
+  const lid = S.mgr.leagueId;
+  leagueCityTimer = setTimeout(async () => {
+    const city = v.trim().slice(0, 80);
+    const { error } = await sb.from("leagues").update({ city }).eq("id", lid);
+    if (error) return toast(errMsg(error));
+    if (S.mgr.data?.league?.id === lid) S.mgr.data.league.city = city;
+    if (S.league && S.leagueId === lid) S.league.city = city;
+  }, 600);
+}
 function saveLeagueName(v) {
   clearTimeout(leagueNameTimer);
   leagueNameTimer = setTimeout(async () => {
@@ -1900,7 +1911,7 @@ function reportData(id, raw) {
   for (const t of lowsAuto) { if (lows.length >= 2) break; if (!lows.includes(t)) lows.push(t); }
   const d = new Date((m.date || "") + "T12:00");
   const facts = {
-    lockedAt: m.lockedAt || null, team, opponent: opp, date: m.date || "", city: (S.team.city || "").trim() || undefined, league: S.league?.name || "", season: S.seasons[sid]?.name || "",
+    lockedAt: m.lockedAt || null, team, opponent: opp, date: m.date || "", city: (S.league?.city || "").trim() || undefined, league: S.league?.name || "", season: S.seasons[sid]?.name || "",
     score: { us: sc.w, them: sc.l }, result: { W: "win", L: "loss", T: "tie" }[sc.res] || "unfinished",
     forfeit: m.forfeit ? (m.forfeit === "them" ? "opponent forfeited" : "we forfeited") : null,
     playoff: po ? { round, format: fmt === "double" ? "double elimination" : "single elimination", bracket: fmt === "double" ? bracket : null, outcome: tag, next: m.poNext || null } : null,
@@ -2182,6 +2193,7 @@ document.addEventListener("change", e => {
 document.addEventListener("input", e => {
   const t = e.target, f = t.dataset.field; if (!f || !S.canWrite) return;
   if (f === "league-name") { saveLeagueName(t.value); return; }
+  if (f === "league-city") { saveLeagueCity(t.value); return; }
   if (f === "rules-q") { S.ui.rulesQ = t.value; clearTimeout(window._rq); window._rq = setTimeout(updateRulesResults, 120); return; }
   if (f === "rules-draft") { S.ui.draft = { text: t.value, fileName: S.ui.draft?.fileName || "" }; const btn = $('[data-act="rules-post"]'); if (btn) btn.disabled = !t.value.trim(); return; }
   if ((f === "opponent" || f === "opp") && S.matches[S.view.matchId]?.locked) return;
@@ -2189,7 +2201,6 @@ document.addEventListener("input", e => {
   if (f === "opponent") { const m = S.matches[S.view.matchId]; m.opponent = t.value; persist("matches", S.view.matchId); }
   else if (f === "opp") { const m = S.matches[S.view.matchId], gm = m.games[+t.dataset.g]; (gm.opp ||= ["", ""])[+t.dataset.s] = t.value; persist("matches", S.view.matchId); }
   else if (f === "team-name") { S.team.name = t.value; persist("config", "team"); }
-  else if (f === "team-city") { S.team.city = t.value; persist("config", "team"); }
   else if (f === "player-name") { const p = S.seasons[t.dataset.id].players.find(x => x.id === t.dataset.p); if (p) p.name = t.value; persist("seasons", t.dataset.id); }
 });
 document.addEventListener("focusout", e => { if (e.target.dataset?.field && e.target.type === "text") { clearTimeout(window._fo); window._fo = setTimeout(render, 300); } });

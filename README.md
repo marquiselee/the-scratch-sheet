@@ -47,7 +47,7 @@ Admins can tap **Forgot password?** on the sign-in screen to get a reset link by
 - `supabase/migrations/003_leagues_and_seasons.sql` adds leagues and league seasons, keeping all existing teams, rosters, matches and admins (they move into one league called "My League").
 - `supabase/migrations/004_final_lineup.sql` enforces finalized lineups (and auto-finalizes on match lock).
 - `supabase/migrations/005_match_reports.sql` adds the table for Claude-written match reports.
-- `supabase/migrations/006_team_city.sql` adds a team city (Team tab), used for local color and match-day weather in reports.
+- `supabase/migrations/006_league_city.sql` adds a league city (League tab), used for local color and match-day weather in reports.
 
 ## Claude-written match reports
 
