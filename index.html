@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v45 2026-10-15: Claude writes each locked match's headline, summary, highlights and lowlights (match-report Edge Function, match_reports table). The app's own lines stay as the fallback.
   v44 2026-10-15: Hot hand / Bright spot now scored on wins, big games (clinchers, stay-alive wins, deciders), scratches and win streaks carried over from earlier weeks.
   v43 2026-10-15: Report lowlights always cover scratch trouble: the player with the most scratches, 8-ball scratches, and scratch-heavy games (won or lost).
   v42 2026-10-15: Report stat back to "Cleanest" with a scratch-count subline; averages labelled "avg".
@@ -117,6 +118,7 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 #report[hidden]{display:none}
 .rp-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;max-width:648px;color:#cfe3d7}
 .rp-bar .btn{min-height:40px}
+.rp-writing{animation:rpw 1.4s ease-in-out infinite}@keyframes rpw{50%{opacity:.45}}
 .rp-stage{flex:none;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5)}
 .rep-ico{vertical-align:-3px;color:var(--chalk)}
 .rep-btn{display:inline-flex;align-items:center;gap:6px}
@@ -535,7 +537,7 @@ const SB_KEY = "sb_publishable_0Bg3NuYq58agSddJxfc71w_ZRJEAeoj"; // public key: 
 const toEmail = u => String(u).trim().toLowerCase();
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const APP_URL = location.origin + location.pathname;
-let sb = null, chan = null;
+let sb = null, chan = null, repChan = null;
 const errMsg = e => (e && (e.message || e.error_description)) || "Something went wrong. Check your connection and try again.";
 
 /* ---------- saving ---------- */
@@ -607,7 +609,8 @@ async function loadSeasons() {
 }
 async function loadTeam(teamId) {
   if (chan) { sb.removeChannel(chan); chan = null; }
-  S.teamId = teamId; S.seasons = {}; S.matches = {}; S.view.matchId = null;
+  if (repChan) { sb.removeChannel(repChan); repChan = null; }
+  S.teamId = teamId; S.seasons = {}; S.matches = {}; S.reports = {}; S.view.matchId = null;
   S.loaded = { team: false, seasons: false, matches: false, rules: false }; render();
   const t = await sb.from("teams").select("id,name,league_id").eq("id", teamId).maybeSingle();
   if (!t.data) return signOut(S.role === "member" ? "Your team session ended. Enter the PIN again." : "That team isn't available.");
@@ -617,6 +620,7 @@ async function loadTeam(teamId) {
     sb.from("matches").select("id,data").eq("team_id", teamId),
   ]);
   (ma.data || []).forEach(r => S.matches[r.id] = r.data);
+  sb.from("match_reports").select("match_id,locked_at,data").eq("team_id", teamId).then(({ data }) => { (data || []).forEach(r => S.reports[r.match_id] = r); if (data?.length) { render(); renderReport(); } });
   S.league = lg.data || { name: "", current_season_id: null };
   S.team = { name: t.data.name, activeSeasonId: S.league.current_season_id || "" };
   S.rules = rulesFrom(lg.data);
@@ -642,6 +646,13 @@ async function loadTeam(teamId) {
       S.league = { ...S.league, ...p.new }; S.team.activeSeasonId = p.new.current_season_id || "";
       if (!busy("config/rules")) S.rules = rulesFrom(p.new);
       render();
+    })
+    .subscribe();
+  // Claude's write-ups get their own channel, so a missing match_reports table can't break live match updates
+  repChan = sb.channel("reports-" + teamId)
+    .on("postgres_changes", { event: "*", schema: "public", table: "match_reports", filter: `team_id=eq.${teamId}` }, p => {
+      if (p.eventType === "DELETE") delete S.reports[p.old?.match_id]; else if (p.new?.match_id) S.reports[p.new.match_id] = p.new;
+      renderReport();
     })
     .subscribe();
   render();
@@ -698,9 +709,9 @@ async function afterAuth() {
 }
 async function signOut(msg) {
   try { if (S.role === "member") await sb.rpc("leave_team"); } catch (e) {}
-  if (chan) { sb.removeChannel(chan); chan = null; }
+  if (chan) { sb.removeChannel(chan); chan = null; } if (repChan) { sb.removeChannel(repChan); repChan = null; }
   try { await sb.auth.signOut(); } catch (e) {}
-  Object.assign(S, { role: null, username: "", adminLeague: null, teamId: null, leagueId: null, seasons: {}, matches: {}, team: { name: "", activeSeasonId: "" }, leagueAdmins: null, adminTeams: [], adminLeagues: [], mgr: { leagueId: null, data: null, seasonId: null } });
+  Object.assign(S, { role: null, username: "", adminLeague: null, teamId: null, leagueId: null, seasons: {}, matches: {}, reports: {}, team: { name: "", activeSeasonId: "" }, leagueAdmins: null, adminTeams: [], adminLeagues: [], mgr: { leagueId: null, data: null, seasonId: null } });
   S.view = { tab: "matches", matchId: null, seasonId: null }; S.ui.modal = null; S.ui.report = null; renderLayer(); renderReport();
   return showGate(msg || "");
 }
@@ -1738,7 +1749,7 @@ function saveLeagueName(v) {
 /* ---------- match report (built in the browser from locked match data) ---------- */
 const REPORT_ICON = '<svg class="rep-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"></path><path d="M14 3v5h5M9 13h7M9 17h5M9 9h3"></path></svg>';
 const isLossRes = r => r === "L" || r === "FF";
-function reportData(id) {
+function reportData(id, raw) {
   const m = S.matches[id]; if (!m) return null;
   const sid = m.seasonId, name = p => pName(sid, p, m).replace(/ \(sub\)$/, "");
   const pair = ps => ps.length ? ps.map(name).join(" & ") : "—";
@@ -1884,6 +1895,24 @@ function reportData(id) {
   if (lowsAuto.length && /had \d+ scratches/.test(lowsAuto[0])) lows.unshift(lowsAuto.shift());
   for (const t of lowsAuto) { if (lows.length >= 2) break; if (!lows.includes(t)) lows.push(t); }
   const d = new Date((m.date || "") + "T12:00");
+  const facts = {
+    lockedAt: m.lockedAt || null, team, opponent: opp, date: m.date || "", league: S.league?.name || "", season: S.seasons[sid]?.name || "",
+    score: { us: sc.w, them: sc.l }, result: { W: "win", L: "loss", T: "tie" }[sc.res] || "unfinished",
+    forfeit: m.forfeit ? (m.forfeit === "them" ? "opponent forfeited" : "we forfeited") : null,
+    playoff: po ? { round, format: fmt === "double" ? "double elimination" : "single elimination", bracket: fmt === "double" ? bracket : null, outcome: tag, next: m.poNext || null } : null,
+    games: games.map(g => ({ game: g.n, players: g.p.map(name), result: { W: "won", L: "lost", FF: "forfeited", NP: "not played" }[g.r] || "not recorded", note: g.i === clinch && sc.res === "W" && sc.l > 0 ? "clinched the match" : g.i === decider ? "deciding game 5" : g.big === "stay-alive" ? "won facing elimination" : undefined, comment: g.comment || undefined })),
+    players: players.map(r => ({ name: name(r.p), games: r.g, won: r.w, lost: r.l, scratches: r.s, gameWinStreak: r.streak >= 3 ? r.streak : undefined })),
+    scratches: scr.map(x => ({ player: name(x.player), game: (x.game ?? -1) + 1 || undefined, type: scrLabel(x.type) })),
+    teamScratches: { tonight: scrN, seasonAvgPerMatch: scrAvg != null ? +scrAvg.toFixed(1) : null },
+    hotHand: hot ? { name: name(hot.p), won: hot.w, lost: hot.l, scratches: hot.s } : null,
+    cleanest: cleanest ? { name: name(cleanest.p), scratches: cleanest.s, games: cleanest.g } : null,
+    trends: trends.slice(0, 3).map(t => `${t.k}: ${t.v}`),
+    record: po ? { playoffs: fmtRec(poRec), overall: fmtRec(allRec) } : { season: fmtRec(regRec) },
+    matchStreak: streak >= 2 ? `${streak} straight ${sc.res === "W" ? "wins" : "losses"}` : null,
+    matchComment: (m.comment || "").trim() || undefined,
+    highlights: highs.slice(0, 2), lowlights: lows.slice(0, 2),
+  };
+  const ai = !raw && aiReport(id);
   return {
     team, opp, sc, tag, tagTone, strip, headline, summary: [s1, s2].filter(Boolean).join(" "),
     games: games.map(g => ({ n: g.n, who: pair(g.p), r: g.r, mark: g.i === clinch && sc.res === "W" && sc.l > 0 ? "CLINCH" : g.i === decider ? "DECIDER" : "" })),
@@ -1891,10 +1920,31 @@ function reportData(id) {
     top: po ? `Playoffs${round ? " · " + round : ""}` : `Match report · ${isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`,
     sub: po ? `${fmt === "double" ? "Double" : "Single"} elimination${isNaN(d) ? "" : " · " + d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : `${S.league?.name || ""}${S.seasons[sid] ? " · " + S.seasons[sid].name : ""}`,
     recLine: po ? `Playoffs ${fmtRec(poRec)}` : `Season ${fmtRec(regRec)}`, po, forfeit: !!m.forfeit,
+    facts, ai: !!ai,
+    ...(ai ? { headline: ai.headline || headline, summary: ai.summary || [s1, s2].filter(Boolean).join(" "), highs: ai.highs || highs.slice(0, 2), lows: ai.lows || lows.slice(0, 2) } : {}),
   };
 }
-function reportCardHtml(d) {
-  const e = esc, F = "'Big Shoulders Display','Arial Narrow',sans-serif", M = "'IBM Plex Mono',ui-monospace,monospace";
+/* Claude's write-up for a locked match: stored in match_reports, written by the match-report Edge Function */
+function aiReport(id) {
+  const r = S.reports?.[id], m = S.matches[id];
+  return r && m?.locked && r.locked_at === m.lockedAt ? r.data : null;
+}
+const repPending = new Set(), repTried = new Set();
+async function requestReport(id, force) {
+  const m = S.matches[id];
+  if (!m?.locked || repPending.has(id) || (!force && (aiReport(id) || repTried.has(id + ":" + m.lockedAt)))) return;
+  repPending.add(id); repTried.add(id + ":" + m.lockedAt); renderReport();
+  try {
+    for (let i = 0; i < 40 && busy("matches/" + id); i++) await new Promise(r => setTimeout(r, 250));   // let the lock save land first
+    const d = reportData(id, true);
+    const { data, error } = await sb.functions.invoke("match-report", { body: { matchId: id, force: !!force, facts: d.facts } });
+    if (data?.report) { S.reports[id] = data.report; }
+    if (force && (error || !data?.report)) toast(data?.error || "Claude couldn't rewrite it right now.");
+  } catch (e) { if (force) toast("Claude couldn't rewrite it right now."); }
+  repPending.delete(id); renderReport();
+}
+function reportCardHtml(d, f = 1) {
+  const z = n => Math.round(n * f), e = esc, F = "'Big Shoulders Display','Arial Narrow',sans-serif", M = "'IBM Plex Mono',ui-monospace,monospace";
   const ballC = ["#f2c12e", "#2453b8", "#cf2e2e", "#6a3aa6", "#ef7a1a"];
   const tagBg = d.tagTone === "win" ? "#1d5c43" : d.tagTone === "loss" ? "#8c2a3c" : "#4f5e55";
   const chip = r => r === "W" ? ["W", "#1d7a40"] : r === "L" ? ["L", "#8c2a3c"] : r === "FF" ? ["FF", "#8c2a3c"] : r === "NP" ? ["NP", "#6b776f"] : ["—", "#9aa79f"];
@@ -1913,17 +1963,25 @@ function reportCardHtml(d) {
 <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span style="background:${tagBg};color:#fff;font-family:${M};font-weight:700;font-size:26px;letter-spacing:.12em;padding:6px 16px;border-radius:8px">${e(d.tag)}</span><span style="font-size:26px;font-weight:600;color:#3f4d45">${e(d.recLine)}</span></div></div>
 </div>
 ${d.strip ? `<div style="display:grid;grid-template-columns:50px minmax(0,1fr);gap:16px;align-items:center;background:#fbf1cf;border:2px solid #e2c25a;border-radius:18px;padding:12px 18px"><div style="width:50px;height:50px;border-radius:12px;background:#f2c12e;display:grid;place-items:center"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#16211b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"></path><path d="M8 6H5a3 3 0 0 0 3 3M16 6h3a3 3 0 0 1-3 3M12 12v4M9 20h6"></path></svg></div><div style="font-size:30px;font-weight:600;line-height:1.26;color:#3b2f05">${e(d.strip)}</div></div>` : ""}
-<div style="display:flex;flex-direction:column;gap:12px;border-top:3px solid #d5ddd4;padding-top:18px"><div style="font-family:${F};font-weight:800;font-size:52px;line-height:1;text-transform:uppercase;text-wrap:balance">${e(d.headline)}</div><p style="margin:0;font-size:31px;line-height:1.32;color:#2c3a32">${e(d.summary)}</p></div>
-<div style="display:flex;flex-direction:column;gap:6px">${d.games.map((g, i) => { const [t, c] = chip(g.r); const hl = g.mark ? (g.r === "W" ? "#1d5c43" : "#8c2a3c") : ""; return `<div style="display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:20px;background:#fff;border:${hl ? `3px solid ${hl}` : "2px solid #d5ddd4"};border-radius:18px;padding:${hl ? "5px 17px" : "6px 18px"}"><div style="width:48px;height:48px;border-radius:50%;background:${ballC[i]};display:grid;place-items:center"><span style="width:30px;height:30px;border-radius:50%;background:#fff;display:grid;place-items:center;font:700 19px ${M}">${g.n}</span></div><div style="font-size:35px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(g.who)}</div><div style="font:700 27px ${M};color:#fff;background:${c};padding:6px 18px;border-radius:999px">${t}${g.mark ? " · " + g.mark : ""}</div></div>`; }).join("")}</div>
+<div style="display:flex;flex-direction:column;gap:12px;border-top:3px solid #d5ddd4;padding-top:18px"><div style="font-family:${F};font-weight:800;font-size:${z(52)}px;line-height:1;text-transform:uppercase;text-wrap:balance">${e(d.headline)}</div><p style="margin:0;font-size:${z(31)}px;line-height:1.32;color:#2c3a32">${e(d.summary)}</p></div>
+<div style="display:flex;flex-direction:column;gap:6px">${d.games.map((g, i) => { const [t, c] = chip(g.r); const hl = g.mark ? (g.r === "W" ? "#1d5c43" : "#8c2a3c") : ""; return `<div style="display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:20px;background:#fff;border:${hl ? `3px solid ${hl}` : "2px solid #d5ddd4"};border-radius:18px;padding:${hl ? `${z(5)}px 17px` : `${z(6)}px 18px`}"><div style="width:48px;height:48px;border-radius:50%;background:${ballC[i]};display:grid;place-items:center"><span style="width:30px;height:30px;border-radius:50%;background:#fff;display:grid;place-items:center;font:700 19px ${M}">${g.n}</span></div><div style="font-size:35px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(g.who)}</div><div style="font:700 27px ${M};color:#fff;background:${c};padding:6px 18px;border-radius:999px">${t}${g.mark ? " · " + g.mark : ""}</div></div>`; }).join("")}</div>
 <div style="display:grid;grid-template-columns:repeat(${d.tiles.length},minmax(0,1fr));gap:14px">${d.tiles.map(t => `<div style="background:${t.tone === "bad" ? "#f3e4e8" : "#e2ebe5"};border-radius:18px;padding:14px 18px;display:flex;flex-direction:column;gap:4px;min-width:0"><div style="font:700 21px ${M};letter-spacing:.08em;text-transform:uppercase;color:${t.tone === "bad" ? "#6b2433" : "#3f4d45"}">${e(t.k)}</div><div style="font-family:${F};font-weight:800;font-size:52px;line-height:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(t.v)}</div><div style="font-size:27px;color:#3f4d45">${e(t.sub)}</div></div>`).join("")}</div>
-${d.trends.length ? `<div style="display:flex;flex-direction:column;gap:10px"><div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#2a78b0">${e(d.trendsLabel)}</div>${d.trends.map(t => `<div style="display:grid;grid-template-columns:46px minmax(0,1fr);gap:14px;align-items:center;background:#fff;border:2px solid #d5ddd4;border-radius:18px;padding:9px 16px"><div style="width:46px;height:46px;border-radius:14px;background:#e3eef8;display:grid;place-items:center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2a78b0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${ico[t.icon] || ico.cal}</svg></div><div style="display:flex;flex-direction:column;gap:2px;min-width:0"><div style="font:700 20px ${M};letter-spacing:.1em;text-transform:uppercase;color:#2a78b0">${e(t.k)}</div><div style="font-size:31px;font-weight:600;line-height:1.22">${e(t.v)}</div></div></div>`).join("")}</div>` : ""}
+${d.trends.length ? `<div style="display:flex;flex-direction:column;gap:10px"><div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#2a78b0">${e(d.trendsLabel)}</div>${d.trends.map(t => `<div style="display:grid;grid-template-columns:46px minmax(0,1fr);gap:14px;align-items:center;background:#fff;border:2px solid #d5ddd4;border-radius:18px;padding:9px 16px"><div style="width:46px;height:46px;border-radius:14px;background:#e3eef8;display:grid;place-items:center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2a78b0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${ico[t.icon] || ico.cal}</svg></div><div style="display:flex;flex-direction:column;gap:2px;min-width:0"><div style="font:700 20px ${M};letter-spacing:.1em;text-transform:uppercase;color:#2a78b0">${e(t.k)}</div><div style="font-size:${z(31)}px;font-weight:600;line-height:1.22">${e(t.v)}</div></div></div>`).join("")}</div>` : ""}
 ${d.highs.length || d.lows.length ? `<div style="display:flex;flex-direction:column;gap:10px;border-top:3px solid #d5ddd4;padding-top:18px">
-${d.highs.length ? `<div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#1d7a40">Highlights</div>${d.highs.map(t => arrow("#1d7a40", "M12 19V5M5 12l7-7 7 7") + `<div style="font-size:31px;line-height:1.28">${e(t)}</div></div>`).join("")}` : ""}
-${d.lows.length ? `<div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#8c2a3c">Lowlights</div>${d.lows.map(t => arrow("#8c2a3c", "M12 5v14M5 12l7 7 7-7") + `<div style="font-size:31px;line-height:1.28">${e(t)}</div></div>`).join("")}` : ""}
+${d.highs.length ? `<div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#1d7a40">Highlights</div>${d.highs.map(t => arrow("#1d7a40", "M12 19V5M5 12l7-7 7 7") + `<div style="font-size:${z(31)}px;line-height:1.28">${e(t)}</div></div>`).join("")}` : ""}
+${d.lows.length ? `<div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#8c2a3c">Lowlights</div>${d.lows.map(t => arrow("#8c2a3c", "M12 5v14M5 12l7 7 7-7") + `<div style="font-size:${z(31)}px;line-height:1.28">${e(t)}</div></div>`).join("")}` : ""}
 </div>` : ""}
 </div>
 <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;font-family:${M};font-size:24px;font-weight:500;color:#cfe3d7"><span>Scored on The Scratch Sheet</span><span style="color:#9fd0f2">marquiselee.github.io/the-scratch-sheet</span></div>
 </div>`;
+}
+/* render the card into el, stepping text down until everything fits the 9:16 frame */
+function fitCard(el, d) {
+  for (const f of [1, 0.94, 0.88, 0.82, 0.76, 0.7]) {
+    el.innerHTML = reportCardHtml(d, f);
+    const panel = el.querySelector(".rp-card")?.children[1];
+    if (!panel || panel.scrollHeight <= panel.clientHeight + 1) return;
+  }
 }
 function renderReport() {
   const box = $("#report"); if (!box) return;
@@ -1931,9 +1989,11 @@ function renderReport() {
   if (!m || !m.locked) { box.hidden = true; box.innerHTML = ""; document.body.style.overflow = ""; return; }
   const d = reportData(id);
   const sc = Math.min((window.innerWidth - 24) / 1080, (window.innerHeight - 96) / 1920, 0.6);
-  box.innerHTML = `<div class="rp-bar"><button class="btn small" data-act="report-close">Close</button><span class="small">Screenshot to share</span><button class="btn small primary" data-act="report-save">Save image</button></div>
-    <div class="rp-stage" style="width:${Math.round(1080 * sc)}px;height:${Math.round(1920 * sc)}px"><div style="transform:scale(${sc});transform-origin:0 0;width:1080px;height:1920px">${reportCardHtml(d)}</div></div>`;
+  const mid = repPending.has(id) ? `<span class="small rp-writing">Claude is writing it up…</span>` : d.ai && isAdmin() ? `<button class="btn small" data-act="report-rewrite" title="Have Claude write a fresh take">Rewrite</button>` : `<span class="small">Screenshot to share</span>`;
+  box.innerHTML = `<div class="rp-bar"><button class="btn small" data-act="report-close">Close</button>${mid}<button class="btn small primary" data-act="report-save" ${repPending.has(id) ? "disabled" : ""}>Save image</button></div>
+    <div class="rp-stage" style="width:${Math.round(1080 * sc)}px;height:${Math.round(1920 * sc)}px"><div class="rp-fit" style="transform:scale(${sc});transform-origin:0 0;width:1080px;height:1920px"></div></div>`;
   box.hidden = false; document.body.style.overflow = "hidden";
+  fitCard(box.querySelector(".rp-fit"), d);
 }
 async function saveReportImage() {
   const id = S.ui.report; if (!id) return;
@@ -1943,7 +2003,7 @@ async function saveReportImage() {
     await document.fonts?.ready;
     const holder = document.createElement("div");
     holder.style.cssText = "position:fixed;left:-20000px;top:0;width:1080px;height:1920px";
-    holder.innerHTML = reportCardHtml(reportData(id)); document.body.append(holder);
+    document.body.append(holder); fitCard(holder, reportData(id));
     const canvas = await window.html2canvas(holder.firstElementChild, { scale: 1, backgroundColor: "#123b2b", useCORS: true, logging: false });
     holder.remove();
     const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
@@ -1966,7 +2026,8 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b || b.tagName === "SELECT" || b.type === "checkbox") return;
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
-  if (a === "report-open") { S.ui.report = b.dataset.id; renderReport(); return; }
+  if (a === "report-open") { S.ui.report = b.dataset.id; renderReport(); if (S.canWrite) requestReport(b.dataset.id); return; }
+  if (a === "report-rewrite") { if (S.ui.report && isAdmin()) requestReport(S.ui.report, true); return; }
   if (a === "report-close") { S.ui.report = null; renderReport(); return; }
   if (a === "report-save") { saveReportImage(); return; }
   if (a === "rules-q-clear") { S.ui.rulesQ = ""; const el = $("#rules-q"); if (el) { el.value = ""; el.focus(); } updateRulesResults(); return; }
@@ -2050,7 +2111,7 @@ document.addEventListener("click", e => {
     const id = S.view.matchId; if (S.ui.relineup?.id !== id || S.ui.relineup.step !== 2) return;
     S.ui.relineup = null; editMatch(x => { x.lineupFinal = false; delete x.lineupFinalAt; }); toast("Lineup reopened for editing"); return;
   }
-  if (a === "lock") { const id = S.view.matchId, m = S.matches[id]; if (!m) return; m.locked = true; m.lockedAt = Date.now(); if (!m.lineupFinal) { m.lineupFinal = true; m.lineupFinalAt = m.lockedAt; } S.ui.relineup = null; S.ui.unlock = null; persist("matches", id); render(); toast("Match locked"); return; }
+  if (a === "lock") { const id = S.view.matchId, m = S.matches[id]; if (!m) return; m.locked = true; m.lockedAt = Date.now(); if (!m.lineupFinal) { m.lineupFinal = true; m.lineupFinalAt = m.lockedAt; } S.ui.relineup = null; S.ui.unlock = null; persist("matches", id); render(); toast("Match locked"); requestReport(id); return; }
   if (/^unlock-(start|next|confirm)$/.test(a) && !isAdmin()) return;
   if (a === "unlock-start") { S.ui.unlock = { id: S.view.matchId, step: 1 }; render(); return; }
   if (a === "unlock-next") { S.ui.unlock = { id: S.view.matchId, step: 2 }; render(); return; }

@@ -46,6 +46,13 @@ Admins can tap **Forgot password?** on the sign-in screen to get a reset link by
 - `supabase/migrations/002_email_logins.sql` switches admin sign-in from usernames to email addresses.
 - `supabase/migrations/003_leagues_and_seasons.sql` adds leagues and league seasons, keeping all existing teams, rosters, matches and admins (they move into one league called "My League").
 - `supabase/migrations/004_final_lineup.sql` enforces finalized lineups (and auto-finalizes on match lock).
+- `supabase/migrations/005_match_reports.sql` adds the table for Claude-written match reports.
+
+## Claude-written match reports
+
+When a match is locked, the app asks the `match-report` Edge Function (`supabase/functions/match-report/index.ts`) to write the report's headline, summary, highlights and lowlights with Claude (Haiku). The function checks that the caller can see the match and that it's locked, writes once per lock (a few rewrites at most), and saves the result in `match_reports`. If the function isn't set up or fails, the card uses the app's own wording.
+
+Setup: run migration 005; deploy the function from the Supabase dashboard (Edge Functions → Deploy a new function → Via Editor, name `match-report`) and turn off its legacy JWT check; add the secret `ANTHROPIC_API_KEY` under Edge Functions → Secrets. The Anthropic key never goes in `index.html`. Optional secret `REPORT_MODEL` overrides the model.
 
 ## Hosting
 
