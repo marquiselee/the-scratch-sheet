@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v41 2026-10-15: Report stat "Cleanest" renamed "Fewest scratches" with a clearer subline.
   v40 2026-10-15: Report icon in the Matches list moved next to the score.
   v39 2026-10-15: Match report. Locking a match creates a shareable 9:16 report (score, write-up, games, stats, season trends, highlights/lowlights); View report buttons, report icon in the match list, Save image; comments can be tagged highlight/lowlight; playoff round/format/bracket fields.
   v38 2026-10-15: Extra games are now a weighted random draw (lower games per match attended = better odds) instead of always lowest-first.
@@ -1788,7 +1789,7 @@ function reportData(id) {
   }
   // stats tiles
   const tiles = [{ k: "Scratches", v: String(scrN), sub: scrAvg != null && scrAvg >= 0.05 ? `vs ${scrAvg.toFixed(1)} season avg` : played ? `${(scrN / played).toFixed(1)} per game` : "", tone: scrAvg != null && scrAvg >= 0.05 && scrN > scrAvg + 1 ? "bad" : "" }];
-  if (cleanest) tiles.push({ k: "Cleanest", v: name(cleanest.p), sub: `${cleanest.s} in ${cleanest.g} game${cleanest.g === 1 ? "" : "s"}` });
+  if (cleanest) tiles.push({ k: "Fewest scratches", v: name(cleanest.p), sub: `${cleanest.s} scratch${cleanest.s === 1 ? "" : "es"} in ${cleanest.g} game${cleanest.g === 1 ? "" : "s"}` });
   if (hot && hot.w) {
     const g4 = games.find(g => g.r === "W" && g.p.includes(hot.p) && (g.i === decider || g.i === clinch || g.i === 3));
     tiles.push(sc.res === "L" ? { k: "Bright spot", v: name(hot.p), sub: hot.w > 1 ? `${hot.w}–${hot.l} tonight` : g4 ? `won game ${g4.n}` : "won a game" } : { k: "Hot hand", v: name(hot.p), sub: `${hot.w}–${hot.l} tonight` });
