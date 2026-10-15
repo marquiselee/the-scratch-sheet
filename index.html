@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v36 2026-10-15: Match date field sized like the other fields on phones; lineup buttons shortened (Randomize, Clear, Finalize, Edit…).
   v35 2026-10-15: "Clear Lineup" button empties every game's players (asks to confirm; hidden once the lineup is final).
   v34 2026-10-15: "Draw pairings" renamed "Randomize Lineup".
   v33 2026-10-15: "New match" buttons renamed "Add Match".
@@ -129,6 +130,9 @@ h3{font:600 15px var(--f-body);margin:0}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:14px;min-width:0}
 label.f{display:grid;gap:4px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.02em}
 input[type=text],input[type=date],select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
+input[type=date]{display:block;box-sizing:border-box;max-width:100%;-webkit-appearance:none;appearance:none;line-height:1.25;min-height:0}
+input[type=date]::-webkit-date-and-time-value{text-align:left;margin:0}
+input[type=date]::-webkit-datetime-edit{padding:0}
 textarea{min-height:120px;resize:vertical}
 input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--chalk);outline-offset:2px}
 .btn{font:600 14px var(--f-body);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:8px 14px;cursor:pointer;white-space:nowrap}
@@ -302,6 +306,7 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
   main{padding-block:16px calc(96px + env(safe-area-inset-bottom,0px));gap:16px}
   .toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))}
   input[type=text],input[type=email],input[type=password],input[type=date],select,textarea{font-size:16px;padding:10px 12px}
+  input[type=date]{height:46px;padding-block:0}
   .btn{min-height:44px}
   .btn.small,.btn.ghost.small{min-height:40px}
   .icon{width:44px;height:44px;font-size:17px}
@@ -841,9 +846,9 @@ function viewMatch(id) {
 
   <section class="panel">
     <div class="row spread"><h3>Lineup · ${GAMES} games of doubles</h3>
-      ${LD ? "" : `<div class="row"><button class="btn w ${armedShuffle ? "armed" : ""}" data-act="shuffle" ${roster.length < 4 || roster.length > MAX_ROSTER || m.forfeit ? "disabled" : ""}>${armedShuffle ? "Replace current lineup?" : anyResults ? "Re-randomize Lineup" : "Randomize Lineup"}</button>
-        <button class="btn danger w ${S.ui.armed === "clear-" + id ? "armed" : ""}" data-act="lineup-clear" ${m.games.some(g => g.p[0] || g.p[1]) ? "" : "disabled"}>${S.ui.armed === "clear-" + id ? "Clear all games?" : "Clear Lineup"}</button>
-        <button class="btn primary w" data-act="lineup-final" ${m.forfeit ? "disabled" : ""}>Finalize lineup</button></div>`}</div>
+      ${LD ? "" : `<div class="row"><button class="btn w ${armedShuffle ? "armed" : ""}" data-act="shuffle" ${roster.length < 4 || roster.length > MAX_ROSTER || m.forfeit ? "disabled" : ""}>${armedShuffle ? "Replace current lineup?" : anyResults ? "Re-randomize" : "Randomize"}</button>
+        <button class="btn danger w ${S.ui.armed === "clear-" + id ? "armed" : ""}" data-act="lineup-clear" ${m.games.some(g => g.p[0] || g.p[1]) ? "" : "disabled"}>${S.ui.armed === "clear-" + id ? "Clear all games?" : "Clear"}</button>
+        <button class="btn primary w" data-act="lineup-final" ${m.forfeit ? "disabled" : ""}>Finalize</button></div>`}</div>
     ${lineupBar(id, m)}
     <div class="notes">
       ${chk.errs.map(e => `<div class="e">${esc(e)}</div>`).join("")}
@@ -866,7 +871,7 @@ function lineupBar(id, m) {
   if (step === 1) return `<div class="lockbar warn" role="alert"><div class="msg"><b>Warning 1 of 2: edit the final lineup?</b><span class="small">Editing reopens who's playing, the pairings and the game order.</span></div><div class="row"><button class="btn" data-act="relineup-cancel">Keep it final</button><button class="btn danger armed w" data-act="relineup-next">Continue</button></div></div>`;
   if (step === 2) return `<div class="lockbar warn" role="alert"><div class="msg"><b>Warning 2 of 2: final confirmation</b><span class="small">Changes after games start can move players between games. Make sure the scoresheet matches. Edit the lineup now?</span></div><div class="row"><button class="btn" data-act="relineup-cancel">Keep it final</button><button class="btn danger armed w" data-act="relineup-confirm">Edit lineup</button></div></div>`;
   const when = m.lineupFinalAt ? new Date(m.lineupFinalAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-  return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Lineup final${when ? " " + esc(when) : ""}</b><span class="small muted">Who's playing, pairings and game order are set. Results, opponents and comments can still be entered.</span></div><button class="btn w" data-act="relineup-start">Edit lineup…</button></div>`;
+  return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Lineup final${when ? " " + esc(when) : ""}</b><span class="small muted">Who's playing, pairings and game order are set. Results, opponents and comments can still be entered.</span></div><button class="btn w" data-act="relineup-start">Edit…</button></div>`;
 }
 
 function lockBar(id, m) {
@@ -1672,7 +1677,7 @@ function saveLeagueName(v) {
 }
 
 /* ---------- actions ---------- */
-function editLineup(fn) { const m = S.matches[S.view.matchId]; if (m?.lineupFinal && !m.locked) { toast("The lineup is final. Tap Edit lineup to change it."); render(); return; } editMatch(fn); }
+function editLineup(fn) { const m = S.matches[S.view.matchId]; if (m?.lineupFinal && !m.locked) { toast("The lineup is final. Tap Edit… in the Lineup section to change it."); render(); return; } editMatch(fn); }
 function editMatch(fn) { const id = S.view.matchId, m = S.matches[id]; if (!m) return; if (m.locked) { toast("This match is locked. Unlock it to make changes."); render(); return; } fn(m); persist("matches", id); render(); }
 function editSeason(id, fn) { const s = S.seasons[id]; if (!s) return; fn(s); persist("seasons", id); render(); }
 function arm(key) { if (S.ui.armed === key) return true; S.ui.armed = key; render(); clearTimeout(arm.t); arm.t = setTimeout(() => { if (S.ui.armed === key) { S.ui.armed = null; render(); } }, 4000); return false; }
@@ -1733,7 +1738,7 @@ document.addEventListener("click", e => {
   if (a === "note") { S.ui.modal = { matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g }; renderLayer(); return; }
   if (!S.canWrite) return;
   if (a === "save-note") { const v = $("#modal-text").value.trim(), md = S.ui.modal; S.ui.modal = null; renderLayer(); editMatch(m => { if (md.g === "match") m.comment = v; else m.games[md.g].comment = v; }); return; }
-  if ((a === "add-sub" || a === "rm-sub") && S.matches[S.view.matchId]?.lineupFinal) { toast("The lineup is final. Tap Edit lineup to change it."); return; }
+  if ((a === "add-sub" || a === "rm-sub") && S.matches[S.view.matchId]?.lineupFinal) { toast("The lineup is final. Tap Edit… in the Lineup section to change it."); return; }
   if (a === "add-sub") {
     const inp = $("#sub-name"), name = inp?.value.trim(); if (!name) { inp?.focus(); return; }
     editMatch(m => { const id = "sub-" + uid(); (m.subs ||= []).push({ id, name }); m.roster = [...(m.roster || []), id]; });
