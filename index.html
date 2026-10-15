@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v26 2026-10-15: Slim header banner on inside pages with the logo and full name; Exit / Sign out at its right.
   v25 2026-10-15: Chalk cube sides changed to maroon (top stays blue).
   v24 2026-10-15: Chalk cube logo: header mark, browser tab icon, home-screen icons and web app manifest.
   v23 2026-10-14: Finalize lineup. A final lineup (who's playing, pairings, game order) needs two confirmations to edit; locking a match finalizes it automatically.
@@ -79,6 +80,17 @@ img{max-width:100%}
 input[type=password],input[type=email]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
 input.pin{font:600 22px/1 var(--f-mono);letter-spacing:.5em;text-align:center}
 input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
+#topbar{position:sticky;top:0;z-index:6;background:var(--cloth);color:var(--cloth-ink);padding-top:env(safe-area-inset-top,0px)}
+#topbar .tb{max-width:880px;margin:0 auto;min-height:48px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+#topbar .tb-id{display:flex;align-items:center;gap:10px;min-width:0;text-decoration:none;color:inherit}
+#topbar .tb-id img{width:26px;height:26px;flex:none}
+#topbar .tb-name{font:800 20px/1 var(--f-display);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+#topbar .tb-right{display:flex;align-items:center;gap:10px;min-width:0}
+#topbar .tb-who{font-size:12px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:26ch}
+#topbar .tb-exit{font:600 14px var(--f-body);color:inherit;background:transparent;border:1px solid currentColor;border-radius:8px;padding:6px 14px;min-height:36px;cursor:pointer;opacity:.95;white-space:nowrap}
+#topbar .tb-exit:hover{opacity:1;background:rgba(255,255,255,.12)}
+#topbar .tb-exit:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+@media (max-width:480px){#topbar .tb-who{display:none}}
 .who-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
 .who-chip b{color:var(--ink);font-weight:600;max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
@@ -86,7 +98,7 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 @media (max-width:640px){.lrow{grid-template-columns:1fr}.lrow .row{justify-content:flex-start}}
 body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f-body)}
 .wrap{max-width:880px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-header{padding-block:20px 0}
+header{padding-block:16px 0}
 .brand{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
 h1{font:800 clamp(30px,6vw,42px)/1 var(--f-display);letter-spacing:.01em;margin:0;text-transform:uppercase;text-wrap:balance}
 .eyebrow{font:500 11px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
@@ -287,6 +299,7 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
 </head>
 <body>
 
+<div id="topbar" hidden></div>
 <div id="app" class="wrap"><header><div class="eyebrow"><img class="logo" src="icons/logo.svg" alt="">The Scratch Sheet</div><h1>Loading…</h1></header></div>
 <noscript><p style="padding:16px">The Scratch Sheet needs JavaScript turned on.</p></noscript>
 <div id="layer"></div>
@@ -617,15 +630,20 @@ async function boot() {
 /* ---------- render ---------- */
 function render() {
   const act = document.activeElement, keep = act && act.id ? { id: act.id, val: act.value, s: act.selectionStart, e: act.selectionEnd, text: act.matches("input[type=text],textarea") } : null;
-  const app = $("#app");
+  const app = $("#app"), bar = $("#topbar");
   app.className = "wrap" + (S.canWrite ? "" : " ro");
+  if (S.phase === "app") {
+    const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`;
+    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span><button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
+    bar.hidden = false;
+  } else { bar.hidden = true; bar.innerHTML = ""; }
   if (S.phase !== "app") {
     app.innerHTML = `<header><div class="brand"><div class="brand-id"><img class="logo" src="icons/logo.svg" width="64" height="64" alt=""><div><div class="eyebrow">8-ball doubles league</div><h1>The Scratch Sheet</h1></div></div></div></header><main>${S.phase === "boot" ? "" : viewGate()}</main>`;
     if (keep) { const el = document.getElementById(keep.id); if (el) { el.value = keep.val; el.focus({ preventScroll: true }); } }
     return;
   }
   const ready = S.loaded.team && S.loaded.seasons && S.loaded.matches && S.loaded.rules;
-  if (!ready) { app.innerHTML = `<header><div class="eyebrow"><img class="logo" src="icons/logo.svg" alt="">The Scratch Sheet</div><h1>Loading…</h1></header>`; return; }
+  if (!ready) { app.innerHTML = `<header><h1>Loading…</h1></header>`; return; }
   const sid = curSeasonId(), s = S.seasons[sid];
   const rec = sid ? seasonMatches(sid).map(score).reduce((a, x) => (x.res && a[x.res]++, a), { W:0, L:0, T:0 }) : null;
   const seasons = seasonList();
@@ -637,9 +655,8 @@ function render() {
   app.innerHTML = `
   <header>
     <div class="brand">
-      <div><div class="eyebrow"><img class="logo" src="icons/logo.svg" alt="The Scratch Sheet">${esc(S.league?.name || "The Scratch Sheet")}${s ? " · " + esc(s.name) : ""}</div><h1>${esc(S.teamId ? (S.team.name || "Your team") : "No team yet")}</h1></div>
+      <div><div class="eyebrow">${esc(S.league?.name || "League")}${s ? " · " + esc(s.name) : ""}</div><h1>${esc(S.teamId ? (S.team.name || "Your team") : "No team yet")}</h1></div>
       <div class="row">
-        <span class="who-chip">${S.role === "member" ? "Team member" : `<b>${esc(S.username)}</b> ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`}<button class="btn small ghost" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></span>
         ${isLeagueRole() && S.adminTeams.length > 1 ? `<select id="team-pick" aria-label="Team" style="width:auto">${S.adminLeagues.map(l => { const ts = S.adminTeams.filter(t => t.league_id === l.id); return ts.length ? `<optgroup label="${esc(l.name)}">${ts.map(t => `<option value="${t.id}" ${t.id === S.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</optgroup>` : ""; }).join("")}</select>` : ""}
         ${rec ? `<span class="record">Matches <b>${rec.W}–${rec.L}${rec.T ? "–" + rec.T : ""}</b></span>` : ""}
         ${seasons.length > 1 ? `<select id="season-pick" aria-label="Season" style="width:auto">${seasons.map(x => `<option value="${x.id}" ${x.id === sid ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : ""}
