@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v39 2026-10-15: Match report. Locking a match creates a shareable 9:16 report (score, write-up, games, stats, season trends, highlights/lowlights); View report buttons, report icon in the match list, Save image; comments can be tagged highlight/lowlight; playoff round/format/bracket fields.
   v38 2026-10-15: Extra games are now a weighted random draw (lower games per match attended = better odds) instead of always lowest-first.
   v37 2026-10-15: Randomize gives extra (second) games to players with the fewest games per match attended this season; absences don't count for or against.
   v36 2026-10-15: Match date field sized like the other fields on phones; lineup buttons shortened (Randomize, Clear, Finalize, Edit…).
@@ -54,7 +55,7 @@
   v1 2026-10-14: Matches, pairings with rule check, results, comments, standings, team admin.
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap">
 <style>
 /* Layout: one working column (max 880px) — header band, tabs, then a list → detail flow for matches */
 :root{
@@ -107,6 +108,13 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 @media (max-width:480px){#topbar .tb-who{display:none}}
 .who-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
 .who-chip b{color:var(--ink);font-weight:600;max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#report{position:fixed;inset:0;z-index:30;background:rgba(5,12,8,.92);display:flex;flex-direction:column;align-items:center;gap:10px;overflow:auto;padding:calc(10px + env(safe-area-inset-top,0px)) 12px calc(16px + env(safe-area-inset-bottom,0px))}
+#report[hidden]{display:none}
+.rp-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;max-width:648px;color:#cfe3d7}
+.rp-bar .btn{min-height:40px}
+.rp-stage{flex:none;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+.rep-ico{vertical-align:-3px;color:var(--chalk)}
+.rep-btn{display:inline-flex;align-items:center;gap:6px}
 .lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .lrow:first-of-type{border-top:0}
 @media (max-width:640px){.lrow{grid-template-columns:1fr}.lrow .row{justify-content:flex-start}}
@@ -346,6 +354,7 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
 <div id="app" class="wrap"><header><div class="eyebrow"><img class="logo" src="icons/logo.svg?v=27" alt="">The Scratch Sheet</div><h1>Loading…</h1></header></div>
 <noscript><p style="padding:16px">The Scratch Sheet needs JavaScript turned on.</p></noscript>
 <div id="layer"></div>
+<div id="report" hidden role="dialog" aria-modal="true" aria-label="Match report"></div>
 
 <script>
 const GAMES = 5;
@@ -685,7 +694,7 @@ async function signOut(msg) {
   if (chan) { sb.removeChannel(chan); chan = null; }
   try { await sb.auth.signOut(); } catch (e) {}
   Object.assign(S, { role: null, username: "", adminLeague: null, teamId: null, leagueId: null, seasons: {}, matches: {}, team: { name: "", activeSeasonId: "" }, leagueAdmins: null, adminTeams: [], adminLeagues: [], mgr: { leagueId: null, data: null, seasonId: null } });
-  S.view = { tab: "matches", matchId: null, seasonId: null }; S.ui.modal = null; renderLayer();
+  S.view = { tab: "matches", matchId: null, seasonId: null }; S.ui.modal = null; S.ui.report = null; renderLayer(); renderReport();
   return showGate(msg || "");
 }
 
@@ -786,7 +795,7 @@ function currentCard(m) {
     <div class="cur-games">${games}</div>
     ${(m.scratches || []).length ? `<div class="cur-scr">${m.scratches.slice().reverse().map(x => `<span class="scr">${m.locked ? "" : `<button class="scr-edit w" data-act="edit-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Edit scratch">`}G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)}${m.locked ? "" : ` <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Remove scratch">×</button>`}</span>`).join("")}</div>` : ""}
     <div class="row"><button class="btn primary" data-act="open" data-id="${m.id}">${m.locked ? "View match" : m.games.some(g => g.p[0]) ? "Open match" : "Set lineup"}</button>
-      <button class="btn w" data-act="scratch" data-m="${m.id}" ${m.locked || !(m.roster || []).length ? "disabled" : ""}>Log scratch</button>
+      ${m.locked ? `<button class="btn rep-btn" data-act="report-open" data-id="${m.id}">${REPORT_ICON}Match report</button>` : `<button class="btn w" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"}>Log scratch</button>`}
       ${(m.scratches || []).length ? `<span class="small muted">${m.scratches.length} scratch${m.scratches.length === 1 ? "" : "es"} this match</span>` : ""}</div>
   </div>`;
 }
@@ -796,10 +805,10 @@ function viewMatches(sid) {
     const [mon, day, rest] = fmtDay(m.date), sc = score(m), no = matchNo(m);
     return `<div class="mrow"><button class="mcard" data-act="open" data-id="${m.id}">
       <div class="mdate">${mon}<b>${day}</b></div>
-      <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
+      <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}${m.locked ? ` <span title="Match report ready">${REPORT_ICON}</span>` : ""}</div>
         <div class="small muted">${esc(rest)}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${m.comment ? " · has note" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
       <span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span>
-    </button><button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${m.locked || !(m.roster || []).length ? "disabled" : ""} title="${m.locked ? "Match is locked" : !(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button></div>`;
+    </button>${m.locked ? `<button class="btn scr-btn rep-btn" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
   }).join("");
   return `
   <section style="display:grid;gap:12px">
@@ -865,6 +874,10 @@ function viewMatch(id) {
       <label class="f">Match date<input type="date" id="m-date" class="w" data-field="date" value="${esc(m.date)}"></label>
       <label class="f">Opposing team<input type="text" id="m-opp" class="w" data-field="opponent" placeholder="Team name" value="${esc(m.opponent)}"></label>
       <label class="f">Match type<select id="m-type" class="w" data-act="mtype"><option value="">Regular season</option><option value="playoff" ${m.playoff ? "selected" : ""}>Playoff</option></select></label>
+      ${m.playoff ? `<label class="f">Playoff round<input type="text" id="m-round" class="w" data-field="poRound" list="po-rounds" placeholder="e.g. Quarterfinal" value="${esc(m.poRound || "")}"><datalist id="po-rounds"><option value="Round 1"></option><option value="Quarterfinal"></option><option value="Semifinal"></option><option value="Final"></option></datalist></label>
+      <label class="f">Playoff format<select id="m-poformat" class="w" data-act="poFormat"><option value="single">Single elimination</option><option value="double" ${m.poFormat === "double" ? "selected" : ""}>Double elimination</option></select></label>
+      ${m.poFormat === "double" ? `<label class="f">Bracket<select id="m-pobracket" class="w" data-act="poBracket"><option value="winners">Winners bracket</option><option value="elim" ${m.poBracket === "elim" ? "selected" : ""}>Elimination bracket</option></select></label>` : ""}
+      <label class="f">Next matchup (optional)<input type="text" id="m-ponext" class="w" data-field="poNext" placeholder="e.g. Semifinal vs Cue Tips, Nov 11" value="${esc(m.poNext || "")}"></label>` : ""}
       <label class="f">Forfeit<select id="m-forfeit" class="w" data-act="forfeit"><option value="">No forfeit</option><option value="us" ${m.forfeit === "us" ? "selected" : ""}>We forfeited (fewer than 4 players)</option><option value="them" ${m.forfeit === "them" ? "selected" : ""}>Opponent forfeited</option></select></label>
     </div>
     <div class="row">
@@ -917,8 +930,8 @@ function lockBar(id, m) {
   if (!m.locked) return `<div class="lockbar"><div class="msg"><b>Open for edits</b><span class="small muted">Lock the match when the scoresheet is final so nothing changes by accident.</span></div><button class="btn w" data-act="lock">Lock match</button></div>`;
   if (step === 1) return `<div class="lockbar warn" role="alert"><div class="msg"><b>Warning 1 of 2: unlock this match?</b><span class="small">Unlocking reopens the lineup, results, opponents and comments for everyone with edit access.</span></div><div class="row"><button class="btn" data-act="unlock-cancel">Keep locked</button><button class="btn danger armed w" data-act="unlock-next">Continue</button></div></div>`;
   if (step === 2) return `<div class="lockbar warn" role="alert"><div class="msg"><b>Warning 2 of 2: final confirmation</b><span class="small">Recorded wins and losses for this match can be changed or erased once it's unlocked. Unlock now?</span></div><div class="row"><button class="btn" data-act="unlock-cancel">Keep locked</button><button class="btn danger armed w" data-act="unlock-confirm">Unlock match</button></div></div>`;
-  if (!isAdmin()) return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Locked${when ? " " + esc(when) : ""}</b><span class="small muted">Lineup, results and comments are final. Ask a team admin if something needs fixing.</span></div></div>`;
-  return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Locked${when ? " " + esc(when) : ""}</b><span class="small muted">Lineup, results and comments are read-only. Unlocking takes two confirmations.</span></div><button class="btn w" data-act="unlock-start">Unlock…</button></div>`;
+  if (!isAdmin()) return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Locked${when ? " " + esc(when) : ""}</b><span class="small muted">Lineup, results and comments are final. Ask a team admin if something needs fixing.</span></div><button class="btn w primary rep-btn" data-act="report-open" data-id="${id}">${REPORT_ICON}View report</button></div>`;
+  return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Locked${when ? " " + esc(when) : ""}</b><span class="small muted">Lineup, results and comments are read-only. Unlocking takes two confirmations.</span></div><div class="row"><button class="btn primary rep-btn" data-act="report-open" data-id="${id}">${REPORT_ICON}View report</button><button class="btn w" data-act="unlock-start">Unlock…</button></div></div>`;
 }
 
 /* ---------- rules: reflow, outline, contents and search (all in the browser) ----------
@@ -1289,9 +1302,11 @@ function renderLayer() {
   if (L.querySelector("#modal-text")) return;
   const m = S.matches[md.matchId]; if (!m) { S.ui.modal = null; L.innerHTML = ""; return; }
   const val = md.g === "match" ? m.comment : m.games[md.g].comment;
+  const tag = md.g === "match" ? (m.commentTag || "") : (m.games[md.g].commentTag || "");
   L.innerHTML = `<div class="scrim" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
     <h3 id="mt">${md.g === "match" ? "Match comment" : `Game ${md.g + 1} comment`}</h3>
     <textarea id="modal-text" class="w" placeholder="Break-and-run, key shots, anything to remember…">${esc(val)}</textarea>
+    <label class="f">Show on the match report as<select id="modal-tag" class="w"><option value="">Just a note (not on the report)</option><option value="hi" ${tag === "hi" ? "selected" : ""}>Highlight</option><option value="lo" ${tag === "lo" ? "selected" : ""}>Lowlight</option></select></label>
     <div class="row spread"><button class="btn ghost" data-act="close-modal">Cancel</button><button class="btn primary w" data-act="save-note">Save comment</button></div>
   </div></div>`;
   setTimeout(() => $("#modal-text")?.focus(), 0);
@@ -1713,6 +1728,192 @@ function saveLeagueName(v) {
   }, 600);
 }
 
+/* ---------- match report (built in the browser from locked match data) ---------- */
+const REPORT_ICON = '<svg class="rep-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"></path><path d="M14 3v5h5M9 13h7M9 17h5M9 9h3"></path></svg>';
+const isLossRes = r => r === "L" || r === "FF";
+function reportData(id) {
+  const m = S.matches[id]; if (!m) return null;
+  const sid = m.seasonId, name = p => pName(sid, p, m).replace(/ \(sub\)$/, "");
+  const pair = ps => ps.length ? ps.map(name).join(" & ") : "—";
+  const sc = score(m), team = S.team.name || "Our team", opp = (m.opponent || "the opponent").trim();
+  const games = m.games.map((g, i) => ({ i, n: i + 1, p: (g.p || []).filter(Boolean), r: g.result || "", comment: (g.comment || "").trim(), tag: g.commentTag || "" }));
+  // running score: clinch, decider, comeback
+  let w = 0, l = 0, clinch = -1, decider = -1, worst = 0, trail = null;
+  games.forEach((g, i) => {
+    if (w === 2 && l === 2 && (g.r === "W" || isLossRes(g.r))) decider = i;
+    if (g.r === "W") { w++; if (w === 3 && clinch < 0) clinch = i; }
+    else if (isLossRes(g.r)) { l++; if (l === 3 && clinch < 0) clinch = i; }
+    if (l - w > worst) { worst = l - w; trail = [w, l]; }
+  });
+  const comeback = sc.res === "W" && worst >= 1 && trail && trail[1] >= 2;
+  // season history up to and including this match
+  const asOf = x => (x.date || "") < (m.date || "") || ((x.date || "") === (m.date || "") && (x.created || 0) <= (m.created || 0));
+  const hist = Object.entries(S.matches).filter(([xid, x]) => x.seasonId === sid && (xid === id || asOf(x)) && score(x).res)
+    .map(([xid, x]) => ({ id: xid, ...x })).sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.created || 0) - (b.created || 0));
+  const rec = arr => arr.reduce((a, x) => { const r = score(x).res; if (r) a[r]++; return a; }, { W: 0, L: 0, T: 0 });
+  const fmtRec = r => `${r.W}–${r.L}${r.T ? "–" + r.T : ""}`;
+  const regRec = rec(hist.filter(x => !x.playoff)), poRec = rec(hist.filter(x => x.playoff)), allRec = rec(hist);
+  const seq = hist.map(x => score(x).res); let streak = 0;
+  for (let i = seq.length - 1; i >= 0 && seq[i] === sc.res; i--) streak++;
+  const before = seq.slice(0, -1), prevRes = before[before.length - 1]; let prev = 0;
+  for (let i = before.length - 1; i >= 0 && before[i] === prevRes; i--) prev++;
+  const pairs = {};
+  hist.forEach(x => (x.games || []).forEach(g => {
+    const ps = (g.p || []).filter(Boolean); if (ps.length < 2 || !(g.result === "W" || g.result === "L")) return;
+    const k = [...ps].sort().join("|"), r = pairs[k] ||= { ps, w: 0, l: 0 }; g.result === "W" ? r.w++ : r.l++;
+  }));
+  const prior = hist.filter(x => x.id !== id && !x.forfeit);
+  const scrAvg = prior.length ? prior.reduce((a, x) => a + (x.scratches || []).length, 0) / prior.length : null;
+  const scr = m.scratches || [], scrN = scr.length, played = games.filter(g => g.r === "W" || isLossRes(g.r)).length;
+  // tonight by player
+  const pl = {};
+  games.forEach(g => g.p.forEach(p => { const r = pl[p] ||= { p, g: 0, w: 0, l: 0, s: 0 }; r.g++; if (g.r === "W") r.w++; else if (isLossRes(g.r)) r.l++; }));
+  scr.forEach(x => { if (pl[x.player]) pl[x.player].s++; });
+  const players = Object.values(pl);
+  const cleanest = players.slice().sort((a, b) => a.s - b.s || b.g - a.g || name(a.p).localeCompare(name(b.p)))[0];
+  const hotSort = players.slice().sort((a, b) => b.w - a.w || a.l - b.l || a.s - b.s);
+  const hot = hotSort.find(x => x !== cleanest && x.w === hotSort[0].w && x.l === hotSort[0].l) || hotSort[0];   // spread the spotlight
+  // playoff outcome
+  const po = !!m.playoff, round = (m.poRound || "").trim(), fmt = m.poFormat || "single", bracket = m.poBracket || "winners";
+  let tag = sc.res === "W" ? "WIN" : sc.res === "L" ? "LOSS" : sc.res === "T" ? "TIE" : "FINAL", tagTone = sc.res === "W" ? "win" : sc.res === "L" ? "loss" : "neutral", strip = null;
+  if (po) {
+    if (sc.res === "W") { tag = /final/i.test(round) && !/semi|quarter/i.test(round) ? "CHAMPIONS" : "ADVANCES"; strip = tag === "CHAMPIONS" ? `League champions · ${fmtRec(allRec)} overall` : `${fmt === "double" ? (bracket === "elim" ? "Elimination bracket · " : "Winners bracket · ") : ""}${m.poNext ? "Next: " + m.poNext : "Moves on to the next round"}`; }
+    else if (sc.res === "L") {
+      if (fmt === "double" && bracket === "winners") { tag = "TO ELIM. BRACKET"; strip = `Drops to the elimination bracket · Still alive${m.poNext ? " · Next: " + m.poNext : ""}`; tagTone = "loss"; }
+      else { tag = "ELIMINATED"; strip = `Season over · Final record ${fmtRec(allRec)}${round ? " · " + round : ""}`; }
+    }
+  }
+  // stats tiles
+  const tiles = [{ k: "Scratches", v: String(scrN), sub: scrAvg != null && scrAvg >= 0.05 ? `vs ${scrAvg.toFixed(1)} season avg` : played ? `${(scrN / played).toFixed(1)} per game` : "", tone: scrAvg != null && scrAvg >= 0.05 && scrN > scrAvg + 1 ? "bad" : "" }];
+  if (cleanest) tiles.push({ k: "Cleanest", v: name(cleanest.p), sub: `${cleanest.s} in ${cleanest.g} game${cleanest.g === 1 ? "" : "s"}` });
+  if (hot && hot.w) {
+    const g4 = games.find(g => g.r === "W" && g.p.includes(hot.p) && (g.i === decider || g.i === clinch || g.i === 3));
+    tiles.push(sc.res === "L" ? { k: "Bright spot", v: name(hot.p), sub: hot.w > 1 ? `${hot.w}–${hot.l} tonight` : g4 ? `won game ${g4.n}` : "won a game" } : { k: "Hot hand", v: name(hot.p), sub: `${hot.w}–${hot.l} tonight` });
+  }
+  // trends
+  const trends = [];
+  const tonightPairs = games.filter(g => g.p.length === 2).map(g => pairs[[...g.p].sort().join("|")]).filter(Boolean);
+  const duo = tonightPairs.filter(r => r.w >= 2 && r.l === 0).sort((a, b) => b.w - a.w)[0] || tonightPairs.filter(r => r.w + r.l >= 3 && r.w / (r.w + r.l) >= 0.75).sort((a, b) => b.w - a.w)[0];
+  if (duo) trends.push({ icon: "duo", k: po ? "Big-game duo" : sc.res === "L" ? "Pairing to keep" : "Dynamic duo", v: `${pair(duo.ps)} are ${duo.w}–${duo.l} as a pair this season`, s2: `${pair(duo.ps)} are now ${duo.w}–${duo.l} as a pair.` });
+  if (sc.res === "W" && streak >= 2) trends.push({ icon: "flame", k: "On a roll", v: `${streak} straight match wins`, s2: `That makes ${streak} straight wins.` });
+  else if (sc.res === "W" && prevRes === "L" && prev >= 2) trends.push({ icon: "flame", k: "Bounce back", v: `Snaps a ${prev}-match skid`, s2: `It snaps a ${prev}-match skid.` });
+  else if (sc.res === "L" && prevRes === "W" && prev >= 2) trends.push({ icon: "back", k: "Streak snapped", v: `Ends a ${prev}-match win streak`, s2: `It snaps a ${prev}-match win streak.` });
+  else if (sc.res === "L" && streak >= 2) trends.push({ icon: "back", k: "Rough patch", v: `${streak} straight losses`, s2: `That's ${streak} losses in a row, so next week is a reset.` });
+  if (scrAvg != null && scrAvg >= 0.05 && Math.abs(scrN - scrAvg) >= 1.5) trends.push(scrN < scrAvg
+    ? { icon: "down", k: "Scratches down", v: `${scrN} tonight vs a ${scrAvg.toFixed(1)} season average`, s2: `${scrN} scratches was well under the season average.` }
+    : { icon: "up", k: "Scratches up", v: `${scrN} tonight vs a ${scrAvg.toFixed(1)} season average`, s2: `${scrN} scratches made it an uphill night.` });
+  if (po && tag === "ELIMINATED") trends.unshift({ icon: "cal", k: "Season wrap", v: `${fmtRec(allRec)} overall this season`, s2: `The season ends at ${fmtRec(allRec)}.` });
+  if (trends.length < 2) trends.push({ icon: "cal", k: po ? "Playoff record" : "Season record", v: po ? `${fmtRec(poRec)} in the playoffs` : `${fmtRec(regRec)} this season`, s2: po ? `The team is ${fmtRec(poRec)} in the playoffs.` : `The season record moves to ${fmtRec(regRec)}.` });
+  // headline
+  const g5 = games[decider];
+  let headline;
+  if (m.forfeit) headline = m.forfeit === "them" ? `${team} wins by forfeit` : `A forfeit night against ${opp}`;
+  else if (po && tag === "CHAMPIONS") headline = `${team} are league champions`;
+  else if (po && tag === "ELIMINATED") headline = decider >= 0 ? `A playoff run ends one game short` : `${opp} ends the playoff run`;
+  else if (po && tag === "ADVANCES") headline = decider >= 0 ? `${team} survives a game-5 thriller` : `${team} advances past ${opp}`;
+  else if (po && tag === "TO ELIM. BRACKET") headline = `${opp} sends ${team} to the elimination bracket`;
+  else if (sc.res === "W" && sc.l === 0) headline = `${team} sweeps ${opp}`;
+  else if (comeback) headline = `${team} rallies from ${trail[0]}–${trail[1]} down`;
+  else if (sc.res === "W" && decider >= 0) headline = `${team} closes it out in a game-5 decider`;
+  else if (sc.res === "W") headline = `${team} takes down ${opp}`;
+  else if (sc.res === "L" && decider >= 0) headline = `A late push falls one game short`;
+  else if (sc.res === "L" && sc.w === 0) headline = `${opp} had the answers tonight`;
+  else if (sc.res === "L") headline = `${opp} edges ${team}`;
+  else headline = `${team} and ${opp} split the night`;
+  // summary: story + trend
+  const nums = gs => gs.length === 1 ? `game ${gs[0].n}` : `games ${gs.slice(0, -1).map(g => g.n).join(", ")} and ${gs[gs.length - 1].n}`;
+  const won = games.filter(g => g.r === "W"), lost = games.filter(g => isLossRes(g.r));
+  let s1;
+  if (m.forfeit) s1 = m.forfeit === "them" ? `${opp} couldn't field a team, so the night goes down as a win.` : `Short on players, the team took the forfeit this week.`;
+  else if (sc.res === "W" && sc.l === 0) s1 = `Every pair delivered for a clean ${sc.w}–0 night, with ${pair(won[0].p)} setting the tone in game 1.`;
+  else if (g5) s1 = `${comeback || (sc.res === "L" && trail) ? `After trailing ${trail ? trail.join("–") : "early"}, ` : `Level at 2–2, `}${g5.p.length ? pair(g5.p) : "the team"} ${g5.r === "W" ? "closed it out in game 5" : "came up just short in game 5"}${sc.res === "W" && won.length > 1 ? `, joining wins from ${won.filter(g => g !== g5).map(g => pair(g.p)).join(" and ")}` : ""}.`;
+  else if (won.length && lost.length) s1 = `${won.map(g => pair(g.p)).join(" and ")} won ${nums(won)}, while ${opp} took ${nums(lost)}.`;
+  else if (won.length) s1 = `${won.map(g => pair(g.p)).join(" and ")} won ${nums(won)}.`;
+  else s1 = `${opp} took ${nums(lost)} on a tough night at the table.`;
+  const s2 = (trends.find(t => t.icon !== "cal") || trends[0])?.s2 || "";
+  // highlights / lowlights: tagged comments first, then what the scoresheet shows
+  const tagged = t => [...games.filter(g => g.tag === t && g.comment).map(g => g.comment), ...(m.commentTag === t && m.comment ? [m.comment.trim()] : [])];
+  const highs = tagged("hi"), lows = tagged("lo");
+  if (g5 && g5.r === "W" && highs.length < 2) highs.push(`${pair(g5.p)} won the deciding game 5.`);
+  if (comeback && highs.length < 2) highs.push(`Battled back from ${trail.join("–")} down.`);
+  if (cleanest && cleanest.s === 0 && cleanest.g >= 2 && highs.length < 2) highs.push(`${name(cleanest.p)} played ${cleanest.g} games without a scratch.`);
+  if (sc.res === "W" && sc.l === 0 && highs.length < 2) highs.push(`A clean sweep, every game won.`);
+  scr.filter(x => x.type === "eight").forEach(x => { const g = games[x.game]; if (g && isLossRes(g.r) && lows.length < 2) lows.push(`A scratch on the 8 cost game ${g.n}.`); });
+  const byGame = {}; scr.forEach(x => byGame[x.game] = (byGame[x.game] || 0) + 1);
+  Object.entries(byGame).sort((a, b) => b[1] - a[1]).forEach(([gi, n]) => { const g = games[gi]; if (n >= 2 && g && isLossRes(g.r) && lows.length < 2 && !lows.some(t => t.includes(`game ${g.n}`))) lows.push(`${n} scratches in game ${g.n}.`); });
+  const d = new Date((m.date || "") + "T12:00");
+  return {
+    team, opp, sc, tag, tagTone, strip, headline, summary: [s1, s2].filter(Boolean).join(" "),
+    games: games.map(g => ({ n: g.n, who: pair(g.p), r: g.r, mark: g.i === clinch && sc.res === "W" && sc.l > 0 ? "CLINCH" : g.i === decider ? "DECIDER" : "" })),
+    tiles, trends: trends.slice(0, 2), trendsLabel: po ? "Playoff run" : "Season trends", highs: highs.slice(0, 2), lows: lows.slice(0, 2),
+    top: po ? `Playoffs${round ? " · " + round : ""}` : `Match report · ${isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`,
+    sub: po ? `${fmt === "double" ? "Double" : "Single"} elimination${isNaN(d) ? "" : " · " + d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : `${S.league?.name || ""}${S.seasons[sid] ? " · " + S.seasons[sid].name : ""}`,
+    recLine: po ? `Playoffs ${fmtRec(poRec)}` : `Season ${fmtRec(regRec)}`, po, forfeit: !!m.forfeit,
+  };
+}
+function reportCardHtml(d) {
+  const e = esc, F = "'Big Shoulders Display','Arial Narrow',sans-serif", M = "'IBM Plex Mono',ui-monospace,monospace";
+  const ballC = ["#f2c12e", "#2453b8", "#cf2e2e", "#6a3aa6", "#ef7a1a"];
+  const tagBg = d.tagTone === "win" ? "#1d5c43" : d.tagTone === "loss" ? "#8c2a3c" : "#4f5e55";
+  const chip = r => r === "W" ? ["W", "#1d7a40"] : r === "L" ? ["L", "#8c2a3c"] : r === "FF" ? ["FF", "#8c2a3c"] : r === "NP" ? ["NP", "#6b776f"] : ["—", "#9aa79f"];
+  const ico = { duo: '<circle cx="8" cy="9" r="3.2"></circle><circle cx="16" cy="9" r="3.2"></circle><path d="M2.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5M10.5 19c.8-3 3-4.5 5.5-4.5s4.7 1.5 5.5 4.5"></path>', flame: '<path d="M12 3c1 3 5 5 5 10a5 5 0 0 1-10 0c0-3 2-4 2-7 1.5 1 2.5 2.5 3 4 .5-2 0-5 0-7z"></path>', up: '<path d="M3 17l6-6 4 4 8-8M15 7h6v6"></path>', down: '<path d="M3 7l6 6 4-4 8 8M15 17h6v-6"></path>', back: '<path d="M4 12h16M8 8l-4 4 4 4"></path>', cal: '<rect x="4" y="5" width="16" height="15" rx="2"></rect><path d="M4 10h16M9 3v4M15 3v4"></path>' };
+  const arrow = (c, p) => `<div style="display:grid;grid-template-columns:40px minmax(0,1fr);gap:14px;align-items:start"><div style="width:40px;height:40px;border-radius:50%;background:${c};display:grid;place-items:center;margin-top:3px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="${p}"></path></svg></div>`;
+  const [s1, s2] = [d.sc.w, d.sc.l];
+  return `<div class="rp-card" style="width:1080px;height:1920px;box-sizing:border-box;padding:40px 44px 36px;display:flex;flex-direction:column;gap:22px;background:#123b2b;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#16211b;text-align:left">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:20px">
+<div style="display:flex;align-items:center;gap:14px"><img src="icons/logo.svg?v=27" width="58" height="58" alt=""><div style="font-family:${F};font-weight:800;font-size:46px;line-height:1;letter-spacing:.03em;text-transform:uppercase;color:#fff">The Scratch Sheet</div></div>
+<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;font-family:${M};text-transform:uppercase;letter-spacing:.08em;text-align:right"><div style="font-size:23px;font-weight:700;color:${d.po ? "#f2c12e" : "#9fd0f2"}">${e(d.top)}</div><div style="font-size:21px;font-weight:500;color:#cfe3d7">${e(d.sub)}</div></div>
+</div>
+<div style="flex:1;min-height:0;overflow:hidden;background:#f2f5f0;border-radius:36px;padding:30px 36px;display:flex;flex-direction:column;gap:18px">
+<div style="display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:28px">
+<div style="font-family:${F};font-weight:800;font-size:128px;line-height:.82;font-variant-numeric:tabular-nums">${d.forfeit ? "FF" : `${s1}<span style="color:#9aa79f;padding:0 10px">–</span>${s2}`}</div>
+<div style="display:flex;flex-direction:column;gap:10px;min-width:0"><div style="font-family:${F};font-weight:800;font-size:58px;line-height:.95;text-transform:uppercase;overflow-wrap:anywhere">${e(d.team)}</div><div style="font-family:${F};font-weight:700;font-size:38px;line-height:1;text-transform:uppercase;color:#3f4d45">vs ${e(d.opp)}</div>
+<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span style="background:${tagBg};color:#fff;font-family:${M};font-weight:700;font-size:26px;letter-spacing:.12em;padding:6px 16px;border-radius:8px">${e(d.tag)}</span><span style="font-size:26px;font-weight:600;color:#3f4d45">${e(d.recLine)}</span></div></div>
+</div>
+${d.strip ? `<div style="display:grid;grid-template-columns:50px minmax(0,1fr);gap:16px;align-items:center;background:#fbf1cf;border:2px solid #e2c25a;border-radius:18px;padding:12px 18px"><div style="width:50px;height:50px;border-radius:12px;background:#f2c12e;display:grid;place-items:center"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#16211b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8v4a4 4 0 0 1-8 0V4z"></path><path d="M8 6H5a3 3 0 0 0 3 3M16 6h3a3 3 0 0 1-3 3M12 12v4M9 20h6"></path></svg></div><div style="font-size:30px;font-weight:600;line-height:1.26;color:#3b2f05">${e(d.strip)}</div></div>` : ""}
+<div style="display:flex;flex-direction:column;gap:12px;border-top:3px solid #d5ddd4;padding-top:18px"><div style="font-family:${F};font-weight:800;font-size:52px;line-height:1;text-transform:uppercase;text-wrap:balance">${e(d.headline)}</div><p style="margin:0;font-size:31px;line-height:1.32;color:#2c3a32">${e(d.summary)}</p></div>
+<div style="display:flex;flex-direction:column;gap:6px">${d.games.map((g, i) => { const [t, c] = chip(g.r); const hl = g.mark ? (g.r === "W" ? "#1d5c43" : "#8c2a3c") : ""; return `<div style="display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:20px;background:#fff;border:${hl ? `3px solid ${hl}` : "2px solid #d5ddd4"};border-radius:18px;padding:${hl ? "5px 17px" : "6px 18px"}"><div style="width:48px;height:48px;border-radius:50%;background:${ballC[i]};display:grid;place-items:center"><span style="width:30px;height:30px;border-radius:50%;background:#fff;display:grid;place-items:center;font:700 19px ${M}">${g.n}</span></div><div style="font-size:35px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(g.who)}</div><div style="font:700 27px ${M};color:#fff;background:${c};padding:6px 18px;border-radius:999px">${t}${g.mark ? " · " + g.mark : ""}</div></div>`; }).join("")}</div>
+<div style="display:grid;grid-template-columns:repeat(${d.tiles.length},minmax(0,1fr));gap:14px">${d.tiles.map(t => `<div style="background:${t.tone === "bad" ? "#f3e4e8" : "#e2ebe5"};border-radius:18px;padding:14px 18px;display:flex;flex-direction:column;gap:4px;min-width:0"><div style="font:700 21px ${M};letter-spacing:.08em;text-transform:uppercase;color:${t.tone === "bad" ? "#6b2433" : "#3f4d45"}">${e(t.k)}</div><div style="font-family:${F};font-weight:800;font-size:52px;line-height:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(t.v)}</div><div style="font-size:27px;color:#3f4d45">${e(t.sub)}</div></div>`).join("")}</div>
+${d.trends.length ? `<div style="display:flex;flex-direction:column;gap:10px"><div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#2a78b0">${e(d.trendsLabel)}</div>${d.trends.map(t => `<div style="display:grid;grid-template-columns:46px minmax(0,1fr);gap:14px;align-items:center;background:#fff;border:2px solid #d5ddd4;border-radius:18px;padding:9px 16px"><div style="width:46px;height:46px;border-radius:14px;background:#e3eef8;display:grid;place-items:center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2a78b0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${ico[t.icon] || ico.cal}</svg></div><div style="display:flex;flex-direction:column;gap:2px;min-width:0"><div style="font:700 20px ${M};letter-spacing:.1em;text-transform:uppercase;color:#2a78b0">${e(t.k)}</div><div style="font-size:31px;font-weight:600;line-height:1.22">${e(t.v)}</div></div></div>`).join("")}</div>` : ""}
+${d.highs.length || d.lows.length ? `<div style="display:flex;flex-direction:column;gap:10px;border-top:3px solid #d5ddd4;padding-top:18px">
+${d.highs.length ? `<div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#1d7a40">Highlights</div>${d.highs.map(t => arrow("#1d7a40", "M12 19V5M5 12l7-7 7 7") + `<div style="font-size:31px;line-height:1.28">${e(t)}</div></div>`).join("")}` : ""}
+${d.lows.length ? `<div style="font:700 22px ${M};letter-spacing:.12em;text-transform:uppercase;color:#8c2a3c">Lowlights</div>${d.lows.map(t => arrow("#8c2a3c", "M12 5v14M5 12l7 7 7-7") + `<div style="font-size:31px;line-height:1.28">${e(t)}</div></div>`).join("")}` : ""}
+</div>` : ""}
+</div>
+<div style="display:flex;justify-content:space-between;align-items:center;gap:16px;font-family:${M};font-size:24px;font-weight:500;color:#cfe3d7"><span>Scored on The Scratch Sheet</span><span style="color:#9fd0f2">marquiselee.github.io/the-scratch-sheet</span></div>
+</div>`;
+}
+function renderReport() {
+  const box = $("#report"); if (!box) return;
+  const id = S.ui.report, m = id && S.matches[id];
+  if (!m || !m.locked) { box.hidden = true; box.innerHTML = ""; document.body.style.overflow = ""; return; }
+  const d = reportData(id);
+  const sc = Math.min((window.innerWidth - 24) / 1080, (window.innerHeight - 96) / 1920, 0.6);
+  box.innerHTML = `<div class="rp-bar"><button class="btn small" data-act="report-close">Close</button><span class="small">Screenshot to share</span><button class="btn small primary" data-act="report-save">Save image</button></div>
+    <div class="rp-stage" style="width:${Math.round(1080 * sc)}px;height:${Math.round(1920 * sc)}px"><div style="transform:scale(${sc});transform-origin:0 0;width:1080px;height:1920px">${reportCardHtml(d)}</div></div>`;
+  box.hidden = false; document.body.style.overflow = "hidden";
+}
+async function saveReportImage() {
+  const id = S.ui.report; if (!id) return;
+  toast("Making the image…");
+  try {
+    if (!window.html2canvas) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js");
+    await document.fonts?.ready;
+    const holder = document.createElement("div");
+    holder.style.cssText = "position:fixed;left:-20000px;top:0;width:1080px;height:1920px";
+    holder.innerHTML = reportCardHtml(reportData(id)); document.body.append(holder);
+    const canvas = await window.html2canvas(holder.firstElementChild, { scale: 1, backgroundColor: "#123b2b", useCORS: true, logging: false });
+    holder.remove();
+    const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+    const m = S.matches[id], file = new File([blob], `scratch-sheet-${(m.date || "match")}-vs-${(m.opponent || "opponent").replace(/[^\w-]+/g, "-")}.png`, { type: "image/png" });
+    if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: "Match report" }).catch(() => {}); return; }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast("Image saved");
+  } catch (e) { toast("Couldn't make the image. Take a screenshot instead."); }
+}
+window.addEventListener("resize", () => { if (S.ui?.report) renderReport(); });
+
 /* ---------- actions ---------- */
 function editLineup(fn) { const m = S.matches[S.view.matchId]; if (m?.lineupFinal && !m.locked) { toast("The lineup is final. Tap Edit… in the Lineup section to change it."); render(); return; } editMatch(fn); }
 function editMatch(fn) { const id = S.view.matchId, m = S.matches[id]; if (!m) return; if (m.locked) { toast("This match is locked. Unlock it to make changes."); render(); return; } fn(m); persist("matches", id); render(); }
@@ -1723,6 +1924,9 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b || b.tagName === "SELECT" || b.type === "checkbox") return;
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
+  if (a === "report-open") { S.ui.report = b.dataset.id; renderReport(); return; }
+  if (a === "report-close") { S.ui.report = null; renderReport(); return; }
+  if (a === "report-save") { saveReportImage(); return; }
   if (a === "rules-q-clear") { S.ui.rulesQ = ""; const el = $("#rules-q"); if (el) { el.value = ""; el.focus(); } updateRulesResults(); return; }
   if (a === "toc-toggle") { e.preventDefault(); const d = $("#rules-toc"); S.ui.tocOpen = !d.open; d.open = S.ui.tocOpen; return; }
   if (a === "rules-jump") { document.getElementById(b.dataset.v)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
@@ -1774,7 +1978,7 @@ document.addEventListener("click", e => {
   if (a === "toggle-season") { const id = b.dataset.id, open = S.ui.openSeason === id || (S.ui.openSeason == null && id === curSeasonId()); S.ui.openSeason = open ? "" : id; render(); return; }
   if (a === "note") { S.ui.modal = { matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g }; renderLayer(); return; }
   if (!S.canWrite) return;
-  if (a === "save-note") { const v = $("#modal-text").value.trim(), md = S.ui.modal; S.ui.modal = null; renderLayer(); editMatch(m => { if (md.g === "match") m.comment = v; else m.games[md.g].comment = v; }); return; }
+  if (a === "save-note") { const v = $("#modal-text").value.trim(), tg = $("#modal-tag")?.value || "", md = S.ui.modal; S.ui.modal = null; renderLayer(); editMatch(m => { if (md.g === "match") { m.comment = v; m.commentTag = v ? tg : ""; } else { m.games[md.g].comment = v; m.games[md.g].commentTag = v ? tg : ""; } }); return; }
   if ((a === "add-sub" || a === "rm-sub") && S.matches[S.view.matchId]?.lineupFinal) { toast("The lineup is final. Tap Edit… in the Lineup section to change it."); return; }
   if (a === "add-sub") {
     const inp = $("#sub-name"), name = inp?.value.trim(); if (!name) { inp?.focus(); return; }
@@ -1863,6 +2067,8 @@ document.addEventListener("change", e => {
   if (t.dataset.act === "roster") { editLineup(m => { const id = t.dataset.id; m.roster = t.checked ? [...new Set([...(m.roster || []), id])] : (m.roster || []).filter(x => x !== id); }); return; }
   if (t.dataset.act === "mtype") { editMatch(m => { m.playoff = t.value === "playoff"; }); return; }
   if (t.dataset.act === "forfeit") { editMatch(m => { m.forfeit = t.value; }); return; }
+  if (t.dataset.act === "poFormat") { editMatch(m => { m.poFormat = t.value; if (t.value !== "double") delete m.poBracket; }); return; }
+  if (t.dataset.act === "poBracket") { editMatch(m => { m.poBracket = t.value; }); return; }
   if (t.dataset.field === "date") { editMatch(m => { m.date = t.value; }); return; }
 });
 
@@ -1872,6 +2078,7 @@ document.addEventListener("input", e => {
   if (f === "rules-q") { S.ui.rulesQ = t.value; clearTimeout(window._rq); window._rq = setTimeout(updateRulesResults, 120); return; }
   if (f === "rules-draft") { S.ui.draft = { text: t.value, fileName: S.ui.draft?.fileName || "" }; const btn = $('[data-act="rules-post"]'); if (btn) btn.disabled = !t.value.trim(); return; }
   if ((f === "opponent" || f === "opp") && S.matches[S.view.matchId]?.locked) return;
+  if ((f === "poRound" || f === "poNext") && S.matches[S.view.matchId] && !S.matches[S.view.matchId].locked) { S.matches[S.view.matchId][f] = t.value; persist("matches", S.view.matchId); return; }
   if (f === "opponent") { const m = S.matches[S.view.matchId]; m.opponent = t.value; persist("matches", S.view.matchId); }
   else if (f === "opp") { const m = S.matches[S.view.matchId], gm = m.games[+t.dataset.g]; (gm.opp ||= ["", ""])[+t.dataset.s] = t.value; persist("matches", S.view.matchId); }
   else if (f === "team-name") { S.team.name = t.value; persist("config", "team"); }
@@ -1880,6 +2087,7 @@ document.addEventListener("input", e => {
 document.addEventListener("focusout", e => { if (e.target.dataset?.field && e.target.type === "text") { clearTimeout(window._fo); window._fo = setTimeout(render, 300); } });
 document.addEventListener("keydown", e => {
   if (e.key === "Enter" && (S.phase === "gate" || S.phase === "recovery")) { const btn = $('[data-act^="gate-"].primary, [data-act="recover-save"]'); if (btn && !btn.disabled) { e.preventDefault(); btn.click(); } return; }
+  if (e.key === "Escape" && S.ui.report) { S.ui.report = null; renderReport(); return; }
   if (e.key === "Escape" && S.ui.modal) { S.ui.modal = null; renderLayer(); }
   if (e.key === "Enter" && e.target.dataset?.enter === "add-player") $(`[data-act="add-player"][data-id="${e.target.dataset.id}"]`)?.click();
   if (e.key === "Enter" && e.target.dataset?.enter === "season-rename-save") $(`[data-act="season-rename-save"][data-id="${e.target.dataset.id}"]`)?.click();
