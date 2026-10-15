@@ -9,7 +9,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.9";
 
 const MODEL = Deno.env.get("REPORT_MODEL") || "claude-haiku-5-5";
-const MAX_WRITES_PER_MATCH = 10;   // first write + a few rewrites; protects the API bill
+const MAX_WRITES_PER_MATCH = 10;
+// one optional web search per write-up for something current to joke about (about $0.01 each); set REPORT_WEB_SEARCH=off to disable
+const SEARCH = (Deno.env.get("REPORT_WEB_SEARCH") || "on") !== "off";
+const SEARCH_TOOL = Deno.env.get("REPORT_SEARCH_TOOL") || "web_search_20250305";   // first write + a few rewrites; protects the API bill
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -63,6 +66,15 @@ Tone
 - Tease the play, never the person: no jokes about bodies, looks, age, race, religion, HIV or anyone's identity; no slurs, including reclaimed ones. Shade about a scratch is fine; cruelty isn't. The opponent gets a nod, not mockery.
 - Vary the shape: don't open every sentence the same way, and don't start the summary with the score.
 
+Making the summary funny
+- Build the summary around one or two real jokes. Reach for the full toolkit: puns, double entendres, innuendo, oxymorons, malapropisms, spoonerisms, hyperbole, irony, understatement, callbacks, mock-epic framing.
+- Tie at least one joke to something outside the pool hall that the group chat will instantly get. Good sources, roughly in order:
+  1. The setting in facts.context: the city's landmarks, neighborhoods, sports teams, food and local quirks; the match-day weather; the day, season or a nearby holiday.
+  2. Something current from your web search, if you ran one and found something fun.
+  3. Hugely popular art, film, TV, music, literature, history or pop-culture moments that nearly everyone knows.
+- Keep references light and affectionate. No politics, tragedies, disasters, crime, illness or deaths, even if they're in the news.
+- Don't present anything as recent news unless it came from your search or from facts.context. The jokes can be invented; the facts about the match and the world can't.
+
 Facts
 - Use only the facts given. Never invent players, scores, shots, comebacks, quotes, streaks or numbers. Every name and number you write must appear in the facts.
 - Player names are written exactly as given. Game numbers, records and scratch counts must match the facts.
@@ -72,7 +84,7 @@ Output
 Reply with one JSON object and nothing else:
 {"headline": string, "summary": string, "highs": string[], "lows": string[]}
 - headline: at most 44 characters, punchy, no trailing period. It is printed in tall capital letters.
-- summary: 2 or 3 sentences, at most 250 characters in total. Tell the story of the night and work in the season trend.
+- summary: 2 or 3 sentences, at most 250 characters in total. Tell the story of the night and work in the season trend. This is the funniest part of the card (see "Making the summary funny").
 - highs: rewrite each item in facts.highlights in your voice, same order, same count, each at most 80 characters. If there are none, return [].
 - lows: rewrite each item in facts.lowlights the same way. Keep the first one's player name and scratch count exactly. If there are none, return [].
 - Plain text only: no emoji, no hashtags, no markdown, no quotation marks around the whole string.`;
@@ -81,6 +93,39 @@ const voiceNote = ([name, style]: [string, string]) => `
 
 Voice for this report
 Channel the comic sensibility of ${name}: ${style}. Commit to it: their rhythm, attitude and comic instincts should shape every line, so each report sounds clearly different from the last. Do not name ${name}, quote them, or use their catchphrases, signature bits or references to their shows; write original lines in that spirit.`;
+
+const STATES: Record<string, string> = { AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "District of Columbia", FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming" };
+const WX: [number, string][] = [[0, "clear skies"], [1, "mostly clear"], [2, "partly cloudy"], [3, "overcast"], [48, "foggy"], [57, "drizzly"], [67, "rainy"], [77, "snowy"], [82, "rain showers"], [86, "snow showers"], [99, "thunderstorms"]];
+const wxText = (c: number) => (WX.find(([max]) => c <= max) || [0, ""])[1];
+
+async function getJSON(u: string) {
+  const r = await fetch(u, { signal: AbortSignal.timeout(4000) });
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+// "Philadelphia, PA" → place + that day's weather from Open-Meteo (free, no key). Best effort: null on any trouble.
+async function placeAndWeather(city: string, date: string) {
+  try {
+    const [name, region = ""] = city.split(",").map(x => x.trim());
+    if (!name) return null;
+    const g = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=10&language=en`);
+    const want = (STATES[region.toUpperCase()] || region).toLowerCase();
+    const res: any[] = g.results || [];
+    const hit = res.find(x => want && [x.admin1, x.country, x.country_code].some((v: string) => (v || "").toLowerCase() === want))
+      || res.find(x => x.country_code === "US") || res[0];
+    if (!hit) return null;
+    const place = { city: hit.name, region: hit.admin1 || "", country: hit.country_code || "", timezone: hit.timezone || "" };
+    let weather = null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const q = `latitude=${hit.latitude}&longitude=${hit.longitude}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto&start_date=${date}&end_date=${date}`;
+      const w = await getJSON(`https://api.open-meteo.com/v1/forecast?${q}`).catch(() => getJSON(`https://archive-api.open-meteo.com/v1/archive?${q}`));
+      const d = w?.daily;
+      if (d?.temperature_2m_max?.[0] != null)
+        weather = `${wxText(d.weather_code?.[0] ?? 0)}, high ${Math.round(d.temperature_2m_max[0])}°F, low ${Math.round(d.temperature_2m_min[0])}°F${d.precipitation_sum?.[0] > 0.05 ? `, ${d.precipitation_sum[0].toFixed(1)} in of precipitation` : ""}`;
+    }
+    return { place, weather };
+  } catch { return null; }
+}
 
 function count(games: any[]) {
   let w = 0, l = 0;
@@ -131,15 +176,28 @@ Deno.serve(async (req) => {
     const pool = VOICES.filter(v => !used.has(v[0]));
     const voice = (pool.length ? pool : VOICES)[Math.floor(Math.random() * (pool.length || VOICES.length))];
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    // setting: the day, the city and that day's weather
+    const city = str(facts.city, 80);
+    const pw = city ? await placeAndWeather(city, String(facts.date || "")) : null;
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(facts.date || "") ? new Date(facts.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
+    const context = { matchDay: day || undefined, city: pw?.place ? [pw.place.city, pw.place.region].filter(Boolean).join(", ") : city || undefined, weatherThatDay: pw?.weather || undefined };
+    const { city: _c, ...matchFacts } = facts;
+    const searchHint = SEARCH ? `\n\nYou may run one quick web search for something current and fun to riff on: tied to ${context.city || "the match day"} (a local team's result, a big local event) or a famous entertainer or athlete in the news around ${day || "the match day"}. Skip anything political or grim. If nothing fun turns up, don't force it.` : "";
+    const ask = (withSearch: boolean) => fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
-        model: MODEL, max_tokens: 2000,
+        model: MODEL, max_tokens: 3000,
         system: SYSTEM + voiceNote(voice),
-        messages: [{ role: "user", content: `Facts for tonight's match report:\n${JSON.stringify(facts)}` }],
+        messages: [{ role: "user", content: `Facts for tonight's match report:\n${JSON.stringify({ ...matchFacts, context })}${withSearch ? searchHint : ""}\n\nReply with the JSON object only.` }],
+        ...(withSearch ? { tools: [{ type: SEARCH_TOOL, name: "web_search", max_uses: 1, ...(pw?.place?.country ? { user_location: { type: "approximate", city: pw.place.city, region: pw.place.region, country: pw.place.country, timezone: pw.place.timezone || undefined } } : {}) }] } : {}),
       }),
     });
+    let res = await ask(SEARCH);
+    if (SEARCH && !res.ok && res.status === 400) {   // web search not enabled for this Anthropic account: write without it
+      console.error("web search refused", (await res.text()).slice(0, 300));
+      res = await ask(false);
+    }
     if (!res.ok) {
       const t = await res.text();
       console.error("anthropic", res.status, t.slice(0, 800));
@@ -147,7 +205,9 @@ Deno.serve(async (req) => {
       return json({ error: `Anthropic API ${res.status}: ${msg}` }, 502);
     }
     const out = await res.json();
-    const text = (out.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
+    const blocks: any[] = out.content || [];
+    const lastTool = blocks.map(c => c.type).lastIndexOf("web_search_tool_result");   // the answer comes after any search
+    const text = blocks.slice(lastTool + 1).filter(c => c.type === "text").map(c => c.text).join("");
     const clean = text.replace(/```(?:json)?/gi, "");
     const a = clean.indexOf("{"), b = clean.lastIndexOf("}");
     let ai: any; try { ai = JSON.parse(clean.slice(a, b + 1)); } catch {
