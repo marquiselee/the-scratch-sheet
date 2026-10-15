@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v44 2026-10-15: Hot hand / Bright spot now scored on wins, big games (clinchers, stay-alive wins, deciders), scratches and win streaks carried over from earlier weeks.
   v43 2026-10-15: Report lowlights always cover scratch trouble: the player with the most scratches, 8-ball scratches, and scratch-heavy games (won or lost).
   v42 2026-10-15: Report stat back to "Cleanest" with a scratch-count subline; averages labelled "avg".
   v41 2026-10-15: Report stat "Cleanest" renamed "Fewest scratches" with a clearer subline.
@@ -1776,9 +1777,28 @@ function reportData(id) {
   games.forEach(g => g.p.forEach(p => { const r = pl[p] ||= { p, g: 0, w: 0, l: 0, s: 0 }; r.g++; if (g.r === "W") r.w++; else if (isLossRes(g.r)) r.l++; }));
   scr.forEach(x => { if (pl[x.player]) pl[x.player].s++; });
   const players = Object.values(pl);
-  const cleanest = players.slice().sort((a, b) => a.s - b.s || b.g - a.g || name(a.p).localeCompare(name(b.p)))[0];
-  const hotSort = players.slice().sort((a, b) => b.w - a.w || a.l - b.l || a.s - b.s);
-  const hot = hotSort.find(x => x !== cleanest && x.w === hotSort[0].w && x.l === hotSort[0].l) || hotSort[0];   // spread the spotlight
+  // big games tonight: the clincher, deciders, and "stay alive" wins when one more loss ends the match
+  let rw = 0, rl = 0;
+  games.forEach((g, i) => {
+    g.big = g.r === "W" ? (i === clinch ? "clincher" : i === decider ? "decider" : rl === 2 ? "stay-alive" : "") : "";
+    if (g.r === "W") rw++; else if (isLossRes(g.r)) rl++;
+  });
+  // game-win streak per player, carried across this season's earlier matches up to tonight
+  const gstreak = {};
+  hist.forEach(x => (x.games || []).forEach(g => (g.p || []).filter(Boolean).forEach(p => {
+    if (g.result === "W") gstreak[p] = (gstreak[p] || 0) + 1; else if (g.result === "L" || g.result === "FF") gstreak[p] = 0;
+  })));
+  players.forEach(r => {
+    r.big = games.filter(g => g.big && g.p.includes(r.p)).map(g => g.big);
+    r.streak = gstreak[r.p] || 0;
+    r.heat = r.w * 3 - r.l * 1.5 - r.s * 1.2 + (r.s === 0 && r.g ? 1 : 0)
+      + r.big.reduce((a, b) => a + (b === "clincher" || b === "decider" ? 2.5 : 1.5), 0)
+      + Math.max(0, Math.min(r.streak, 8) - r.w) * 0.6;          // earlier-week streak adds a little
+  });
+  const hot = players.filter(r => r.w).sort((a, b) => b.heat - a.heat || b.w - a.w || a.s - b.s || name(a.p).localeCompare(name(b.p)))[0];
+  // Cleanest: fewest scratches (more games breaks ties); spread the spotlight if the hot hand would also take it
+  const cleanSort = players.slice().sort((a, b) => a.s - b.s || b.g - a.g || name(a.p).localeCompare(name(b.p)));
+  const cleanest = cleanSort.find(r => r !== hot && r.s === cleanSort[0].s && r.g >= Math.min(2, cleanSort[0].g)) || cleanSort[0];
   // playoff outcome
   const po = !!m.playoff, round = (m.poRound || "").trim(), fmt = m.poFormat || "single", bracket = m.poBracket || "winners";
   let tag = sc.res === "W" ? "WIN" : sc.res === "L" ? "LOSS" : sc.res === "T" ? "TIE" : "FINAL", tagTone = sc.res === "W" ? "win" : sc.res === "L" ? "loss" : "neutral", strip = null;
@@ -1792,9 +1812,9 @@ function reportData(id) {
   // stats tiles
   const tiles = [{ k: "Scratches", v: String(scrN), sub: scrAvg != null && scrAvg >= 0.05 ? `vs ${scrAvg.toFixed(1)} avg per match` : played ? `${(scrN / played).toFixed(1)} avg per game` : "", tone: scrAvg != null && scrAvg >= 0.05 && scrN > scrAvg + 1 ? "bad" : "" }];
   if (cleanest) tiles.push({ k: "Cleanest", v: name(cleanest.p), sub: `${cleanest.s} scratch${cleanest.s === 1 ? "" : "es"} in ${cleanest.g} game${cleanest.g === 1 ? "" : "s"}` });
-  if (hot && hot.w) {
-    const g4 = games.find(g => g.r === "W" && g.p.includes(hot.p) && (g.i === decider || g.i === clinch || g.i === 3));
-    tiles.push(sc.res === "L" ? { k: "Bright spot", v: name(hot.p), sub: hot.w > 1 ? `${hot.w}–${hot.l} tonight` : g4 ? `won game ${g4.n}` : "won a game" } : { k: "Hot hand", v: name(hot.p), sub: `${hot.w}–${hot.l} tonight` });
+  if (hot) {
+    const why = hot.big.includes("clincher") ? "won the clincher" : hot.big.includes("decider") ? "won game 5" : hot.big.includes("stay-alive") ? "kept it alive" : hot.streak > hot.w && hot.streak >= 3 ? `${hot.streak} straight wins` : hot.s === 0 ? "0 scratches" : "";
+    tiles.push({ k: sc.res === "L" ? "Bright spot" : "Hot hand", v: name(hot.p), sub: `${hot.w}–${hot.l}${why ? ", " + why : " tonight"}` });
   }
   // trends
   const trends = [];
