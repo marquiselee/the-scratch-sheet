@@ -67,13 +67,14 @@ Tone
 - Vary the shape: don't open every sentence the same way, and don't start the summary with the score.
 
 Making the summary funny
-- Build the summary around one or two real jokes. Reach for the full toolkit: puns, double entendres, innuendo, oxymorons, malapropisms, spoonerisms, hyperbole, irony, understatement, callbacks, mock-epic framing.
-- Tie at least one joke to something outside the pool hall that the group chat will instantly get. Good sources, roughly in order:
-  1. The setting in facts.context: the city's landmarks, neighborhoods, sports teams, food and local quirks; the match-day weather; the day, season or a nearby holiday.
-  2. Something current from your web search, if you ran one and found something fun.
-  3. Hugely popular art, film, TV, music, literature, history or pop-culture moments that nearly everyone knows.
+- The jokes are about this match. Start from what actually happened: who paired with whom, the comeback or the collapse, the clincher, the scratch that cost a game, the streak, the sweep, the player who couldn't miss or couldn't stop scratching. Find the funny in those specifics.
+- Use the full toolkit on those specifics: puns (including on the opponent's team name), double entendres, innuendo, oxymorons, malapropisms, spoonerisms, hyperbole, irony, understatement, mock-epic framing.
+- An outside reference (film, TV, music, history, art, literature, a sports moment, something local or current) is allowed only when it maps onto a specific moment of the match. A comeback can earn a famous comeback; three scratches can earn a famous disaster; a pair who can't lose can earn a famous duo. A reference that only matches the city, the date or the weather, and not the match, is filler: cut it. Test: if the line would work just as well for any other match, rewrite it.
+- At most one outside reference per report, and plenty of reports should have none.
+- facts.context, when present, is background, not material. Mention the city, the weather or the date only if it sharpens a joke about the match itself, which should be rare.
+- facts.recentReports are this team's last few write-ups. Don't repeat their references, jokes, puns, openings or sentence shapes.
 - Keep references light and affectionate. No politics, tragedies, disasters, crime, illness or deaths, even if they're in the news.
-- Don't present anything as recent news unless it came from your search or from facts.context. The jokes can be invented; the facts about the match and the world can't.
+- Don't present anything as recent news unless it came from your search. The jokes can be invented; the facts about the match and the world can't.
 
 Facts
 - Use only the facts given. Never invent players, scores, shots, comebacks, quotes, streaks or numbers. Every name and number you write must appear in the facts.
@@ -180,16 +181,18 @@ Deno.serve(async (req) => {
     const city = str(facts.city, 80);
     const pw = city ? await placeAndWeather(city, String(facts.date || "")) : null;
     const day = /^\d{4}-\d{2}-\d{2}$/.test(facts.date || "") ? new Date(facts.date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
-    const context = { matchDay: day || undefined, city: pw?.place ? [pw.place.city, pw.place.region].filter(Boolean).join(", ") : city || undefined, weatherThatDay: pw?.weather || undefined };
+    // background only, and not every time, so the setting doesn't creep into every summary
+    const context = { matchDay: day || undefined, city: pw?.place ? [pw.place.city, pw.place.region].filter(Boolean).join(", ") : city || undefined, weatherThatDay: Math.random() < 0.3 ? pw?.weather || undefined : undefined };
+    const recentReports = (recent || []).filter((r: any) => r.data?.summary).slice(0, 5).map((r: any) => ({ headline: r.data.headline, summary: r.data.summary }));
     const { city: _c, ...matchFacts } = facts;
-    const searchHint = SEARCH ? `\n\nYou may run one quick web search for something current and fun to riff on: tied to ${context.city || "the match day"} (a local team's result, a big local event) or a famous entertainer or athlete in the news around ${day || "the match day"}. Skip anything political or grim. If nothing fun turns up, don't force it.` : "";
+    const searchHint = SEARCH ? `\n\nOptional: if one moment of this match (a comeback, a collapse, a streak, a scratch-fest, a clutch finish) reminds you of something that might be in the news around ${day || "the match day"}${context.city ? ` or around ${context.city}` : ""}, you may run one web search to check it. Use it only if it fits that moment. Most reports won't need a search. Skip anything political or grim.` : "";
     const ask = (withSearch: boolean) => fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
         model: MODEL, max_tokens: 3000,
         system: SYSTEM + voiceNote(voice),
-        messages: [{ role: "user", content: `Facts for tonight's match report:\n${JSON.stringify({ ...matchFacts, context })}${withSearch ? searchHint : ""}\n\nReply with the JSON object only.` }],
+        messages: [{ role: "user", content: `Facts for tonight's match report:\n${JSON.stringify({ ...matchFacts, context, recentReports })}${withSearch ? searchHint : ""}\n\nReply with the JSON object only.` }],
         ...(withSearch ? { tools: [{ type: SEARCH_TOOL, name: "web_search", max_uses: 1, ...(pw?.place?.country ? { user_location: { type: "approximate", city: pw.place.city, region: pw.place.region, country: pw.place.country, timezone: pw.place.timezone || undefined } } : {}) }] } : {}),
       }),
     });
