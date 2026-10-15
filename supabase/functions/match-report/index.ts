@@ -9,7 +9,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.110.9";
 
 const MODEL = Deno.env.get("REPORT_MODEL") || "claude-haiku-5-5";
-const MAX_WRITES_PER_MATCH = 10;
+const MAX_WRITES_PER_MATCH = 10;   // for team admins; owners and league admins have no limit
 // one optional web search per write-up for something current to joke about (about $0.01 each); set REPORT_WEB_SEARCH=off to disable
 const SEARCH = (Deno.env.get("REPORT_WEB_SEARCH") || "on") !== "off";
 const SEARCH_TOOL = Deno.env.get("REPORT_SEARCH_TOOL") || "web_search_20250305";   // first write + a few rewrites; protects the API bill
@@ -183,7 +183,13 @@ Deno.serve(async (req) => {
     const admin = createClient(url, service, { auth: { persistSession: false } });
     const { data: prev } = await admin.from("match_reports").select("*").eq("match_id", matchId).maybeSingle();
     if (prev && prev.locked_at === m.lockedAt && !force) return json({ report: prev });
-    if (prev && prev.gen_count >= MAX_WRITES_PER_MATCH) return json({ report: prev, error: "This report has been rewritten as many times as it can be." }, 429);
+    // owners and this league's admins can rewrite without limit; everyone else is capped
+    const [{ data: who }, { data: tm }] = await Promise.all([
+      admin.from("admins").select("role,league_id").eq("user_id", u.user.id).maybeSingle(),
+      admin.from("teams").select("league_id").eq("id", row.team_id).maybeSingle(),
+    ]);
+    const unlimited = who?.role === "owner" || (who?.role === "league" && who.league_id === tm?.league_id);
+    if (!unlimited && prev && prev.gen_count >= MAX_WRITES_PER_MATCH) return json({ report: prev, error: "This report has been rewritten as many times as it can be." }, 429);
 
     const { data: recent } = await admin.from("match_reports").select("data").eq("team_id", row.team_id).order("updated_at", { ascending: false }).limit(8);
     const used = new Set((recent || []).map((r: any) => r.data?.voice).concat(prev?.data?.voice));
