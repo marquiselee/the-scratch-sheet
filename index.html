@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v32 2026-10-15: Header cube removed (logo back in the banner); team name and record now sit above the league · season line.
   v31 2026-10-15: Logo moved from the banner to above the league · season line; team record shown as (W–L) beside the team name.
   v30 2026-10-15: Rules parser handles other rulebook layouts (Article/Section, decimal 1.1, ALL-CAPS or Markdown headings, bullets, (a)/(i) outlines); auto-built Contents with sections and topics; upload preview shows what was found.
   v29 2026-10-15: Rules tab reflows uploaded text (no hard line breaks), shows sections and outline levels with hanging labels, a section jump list, and in-browser search with highlighted matches.
@@ -89,7 +90,7 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 #topbar .tb{max-width:880px;margin:0 auto;min-height:48px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 #topbar .tb-id{display:flex;align-items:center;gap:10px;min-width:0;text-decoration:none;color:inherit}
 #topbar .tb-id img{width:26px;height:26px;flex:none}
-.hdr-logo{display:block;width:44px;height:44px;margin-bottom:8px}
+.eyebrow-below{margin:8px 0 0}
 .h1-rec{font-weight:700;color:var(--muted);font-size:.62em;letter-spacing:.02em;white-space:nowrap;vertical-align:.08em}
 #topbar .tb-name{font:800 20px/1 var(--f-display);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
 #topbar .tb-right{display:flex;align-items:center;gap:10px;min-width:0}
@@ -666,7 +667,7 @@ function render() {
   app.className = "wrap" + (S.canWrite ? "" : " ro");
   if (S.phase === "app") {
     const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`;
-    bar.innerHTML = `<div class="tb"><div class="tb-id"><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span><button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
+    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg?v=27" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span><button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
     bar.hidden = false;
   } else { bar.hidden = true; bar.innerHTML = ""; }
   if (S.phase !== "app") {
@@ -687,7 +688,7 @@ function render() {
   app.innerHTML = `
   <header>
     <div class="brand">
-      <div><img class="hdr-logo" src="icons/logo.svg?v=27" width="44" height="44" alt="The Scratch Sheet"><div class="eyebrow">${esc(S.league?.name || "League")}${s ? " · " + esc(s.name) : ""}</div><h1>${esc(S.teamId ? (S.team.name || "Your team") : "No team yet")}${rec && S.teamId ? ` <span class="h1-rec" title="Match record this season">(${rec.W}–${rec.L}${rec.T ? "–" + rec.T : ""})</span>` : ""}</h1></div>
+      <div><h1>${esc(S.teamId ? (S.team.name || "Your team") : "No team yet")}${rec && S.teamId ? ` <span class="h1-rec" title="Match record this season">(${rec.W}–${rec.L}${rec.T ? "–" + rec.T : ""})</span>` : ""}</h1><div class="eyebrow eyebrow-below">${esc(S.league?.name || "League")}${s ? " · " + esc(s.name) : ""}</div></div>
       <div class="row">
         ${isLeagueRole() && S.adminTeams.length > 1 ? `<select id="team-pick" aria-label="Team" style="width:auto">${S.adminLeagues.map(l => { const ts = S.adminTeams.filter(t => t.league_id === l.id); return ts.length ? `<optgroup label="${esc(l.name)}">${ts.map(t => `<option value="${t.id}" ${t.id === S.teamId ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</optgroup>` : ""; }).join("")}</select>` : ""}
         ${seasons.length > 1 ? `<select id="season-pick" aria-label="Season" style="width:auto">${seasons.map(x => `<option value="${x.id}" ${x.id === sid ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : ""}
