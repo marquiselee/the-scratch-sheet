@@ -6,12 +6,13 @@
 <meta name="theme-color" content="#1d5c43">
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
-<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg?v=27" type="image/svg+xml">
+<link rel="icon" href="icons/favicon-32.png?v=27" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=27">
+<link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v27 2026-10-15: Black header banner; maroon-sided logo (light outline) in the banner; icon links cache-busted so the new logo shows.
   v26 2026-10-15: Slim header banner on inside pages with the logo and full name; Exit / Sign out at its right.
   v25 2026-10-15: Chalk cube sides changed to maroon (top stays blue).
   v24 2026-10-15: Chalk cube logo: header mark, browser tab icon, home-screen icons and web app manifest.
@@ -80,7 +81,7 @@ img{max-width:100%}
 input[type=password],input[type=email]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
 input.pin{font:600 22px/1 var(--f-mono);letter-spacing:.5em;text-align:center}
 input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
-#topbar{position:sticky;top:0;z-index:6;background:var(--cloth);color:var(--cloth-ink);padding-top:env(safe-area-inset-top,0px)}
+#topbar{position:sticky;top:0;z-index:6;background:#0b0f0d;color:#ffffff;padding-top:env(safe-area-inset-top,0px)}
 #topbar .tb{max-width:880px;margin:0 auto;min-height:48px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 #topbar .tb-id{display:flex;align-items:center;gap:10px;min-width:0;text-decoration:none;color:inherit}
 #topbar .tb-id img{width:26px;height:26px;flex:none}
@@ -300,7 +301,7 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
 <body>
 
 <div id="topbar" hidden></div>
-<div id="app" class="wrap"><header><div class="eyebrow"><img class="logo" src="icons/logo.svg" alt="">The Scratch Sheet</div><h1>Loading…</h1></header></div>
+<div id="app" class="wrap"><header><div class="eyebrow"><img class="logo" src="icons/logo.svg?v=27" alt="">The Scratch Sheet</div><h1>Loading…</h1></header></div>
 <noscript><p style="padding:16px">The Scratch Sheet needs JavaScript turned on.</p></noscript>
 <div id="layer"></div>
 
@@ -634,11 +635,11 @@ function render() {
   app.className = "wrap" + (S.canWrite ? "" : " ro");
   if (S.phase === "app") {
     const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`;
-    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span><button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
+    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo-on-dark.svg?v=27" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span><button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
     bar.hidden = false;
   } else { bar.hidden = true; bar.innerHTML = ""; }
   if (S.phase !== "app") {
-    app.innerHTML = `<header><div class="brand"><div class="brand-id"><img class="logo" src="icons/logo.svg" width="64" height="64" alt=""><div><div class="eyebrow">8-ball doubles league</div><h1>The Scratch Sheet</h1></div></div></div></header><main>${S.phase === "boot" ? "" : viewGate()}</main>`;
+    app.innerHTML = `<header><div class="brand"><div class="brand-id"><img class="logo" src="icons/logo.svg?v=27" width="64" height="64" alt=""><div><div class="eyebrow">8-ball doubles league</div><h1>The Scratch Sheet</h1></div></div></div></header><main>${S.phase === "boot" ? "" : viewGate()}</main>`;
     if (keep) { const el = document.getElementById(keep.id); if (el) { el.value = keep.val; el.focus({ preventScroll: true }); } }
     return;
   }
