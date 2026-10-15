@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v35 2026-10-15: "Clear Lineup" button empties every game's players (asks to confirm; hidden once the lineup is final).
   v34 2026-10-15: "Draw pairings" renamed "Randomize Lineup".
   v33 2026-10-15: "New match" buttons renamed "Add Match".
   v32 2026-10-15: Header cube removed (logo back in the banner); team name and record now sit above the league · season line.
@@ -841,6 +842,7 @@ function viewMatch(id) {
   <section class="panel">
     <div class="row spread"><h3>Lineup · ${GAMES} games of doubles</h3>
       ${LD ? "" : `<div class="row"><button class="btn w ${armedShuffle ? "armed" : ""}" data-act="shuffle" ${roster.length < 4 || roster.length > MAX_ROSTER || m.forfeit ? "disabled" : ""}>${armedShuffle ? "Replace current lineup?" : anyResults ? "Re-randomize Lineup" : "Randomize Lineup"}</button>
+        <button class="btn danger w ${S.ui.armed === "clear-" + id ? "armed" : ""}" data-act="lineup-clear" ${m.games.some(g => g.p[0] || g.p[1]) ? "" : "disabled"}>${S.ui.armed === "clear-" + id ? "Clear all games?" : "Clear Lineup"}</button>
         <button class="btn primary w" data-act="lineup-final" ${m.forfeit ? "disabled" : ""}>Finalize lineup</button></div>`}</div>
     ${lineupBar(id, m)}
     <div class="notes">
@@ -1738,6 +1740,13 @@ document.addEventListener("click", e => {
     setTimeout(() => $("#sub-name")?.focus(), 0); return;
   }
   if (a === "rm-sub") { const id = b.dataset.id; editMatch(m => { m.subs = (m.subs || []).filter(x => x.id !== id); m.roster = (m.roster || []).filter(x => x !== id); m.games.forEach(gm => { gm.p = gm.p.map(x => x === id ? "" : x); }); }); return; }
+  if (a === "lineup-clear") {
+    const id = S.view.matchId, m = S.matches[id]; if (!m || m.locked || m.lineupFinal) return;
+    if (!m.games.some(g => g.p[0] || g.p[1])) return;
+    if (!arm("clear-" + id)) return;
+    S.ui.armed = null;
+    editLineup(x => { x.games.forEach(g => { g.p = ["", ""]; if (g.result === "FF") g.result = ""; }); }); toast("Lineup cleared"); return;
+  }
   if (a === "lineup-final") {
     const m = S.matches[S.view.matchId]; if (!m || m.locked || m.lineupFinal) return;
     const chk = check(m);
