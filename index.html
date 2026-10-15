@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v48 2026-10-15: Report facts include ranked storylines (margin, deciders, early clinches, 8-ball swings, attendance, carriers, streaks, head-to-head, team names) and all comments for Claude's angle.
   v47 2026-10-15: League city on the League tab (migration 006), sent with match facts for local color and weather.
   v46 2026-10-15: Report write-up failures now show a message with the reason instead of failing silently.
   v45 2026-10-15: Claude writes each locked match's headline, summary, highlights and lowlights (match-report Edge Function, match_reports table). The app's own lines stay as the fallback.
@@ -1910,12 +1911,72 @@ function reportData(id, raw) {
   if (lowsAuto.length && /had \d+ scratches/.test(lowsAuto[0])) lows.unshift(lowsAuto.shift());
   for (const t of lowsAuto) { if (lows.length >= 2) break; if (!lows.includes(t)) lows.push(t); }
   const d = new Date((m.date || "") + "T12:00");
+  // ---- storylines: what made this match distinctive, most notable first (feeds Claude's angle) ----
+  const story = [];
+  const res5 = games.map(g => g.r === "W" ? "W" : isLossRes(g.r) ? "L" : "");
+  const after = k => res5.slice(0, k).reduce((a, r) => (r === "W" ? a.w++ : r === "L" ? a.l++ : 0, a), { w: 0, l: 0 });
+  const nRoster = (m.roster || []).length, nSubs = (m.subs || []).length;
+  const eightIn = gi => scr.filter(x => x.type === "eight" && x.game === gi);
+  if (m.forfeit === "us") story.push(`Forfeit: the team couldn't field enough players and forfeited the match to ${opp}.`);
+  else if (m.forfeit === "them") story.push(`Forfeit: ${opp} couldn't field a team, so this is a win without a shot taken.`);
+  else if (sc.res) {
+    const [w, l] = [sc.w, sc.l];
+    if (w === 5 || l === 5) story.push(w === 5 ? `Shutout: a perfect 5–0 sweep of ${opp}.` : `Shutout: ${opp} swept all five games.`);
+    else if (Math.abs(w - l) >= 3) story.push(sc.res === "W" ? `Blowout win, ${w}–${l}.` : `Lopsided loss, ${w}–${l}.`);
+    const a4 = after(4);
+    if (a4.w === 4 && res5[4] === "L") story.push(`Perfect night spoiled at the end: up 4–0, then dropped game 5.`);
+    if (a4.l === 4 && res5[4] === "W") story.push(`Avoided the shutout by winning game 5 after trailing 0–4.`);
+    const a3 = after(3);
+    if (a3.w === 3 && l === 2) story.push(`Clinched 3–0 after three games, then ${opp} took games 4 and 5, so the 3–2 final looks closer than it was.`);
+    if (a3.l === 3 && w === 2) story.push(`Lost the match 0–3 after three games, then won games 4 and 5 for a respectable-looking 2–3.`);
+    if (decider >= 0 && games[decider].r === "FF") story.push(`Level at 2–2 after four games, then lost the match on game 5, which was forfeited because there was no one left to play it.`);
+    else if (decider >= 0) story.push(`Decided in game 5 at 2–2: ${games[decider].p.length ? pair(games[decider].p) : "the team"} ${res5[decider] === "W" ? "won it" : "lost it"}.`);
+    const a2 = after(2);
+    if (sc.res === "L" && a2.w === 2) story.push(`Collapse: led 2–0, then lost three straight.`);
+    if (comeback) story.push(`Comeback: trailed ${trail.join("–")} and won.`);
+    // 8-ball scratches that cost a game, and whether they decided the match
+    games.forEach((g, gi) => {
+      const e = eightIn(gi); if (!e.length || res5[gi] !== "L") return;
+      const who = name(e[0].player);
+      if (gi === decider || (sc.res === "L" && gi === clinch)) story.push(`Lost on the 8: ${who}'s scratch on the 8-ball cost game ${g.n}, and that game decided the match.`);
+      else if (sc.res === "W") story.push(`A scratch on the 8 by ${who} gave away game ${g.n}; without it the win would have been ${w + 1}–${l - 1}.`);
+      else story.push(`A scratch on the 8 by ${who} gave away game ${g.n}.`);
+    });
+    if (nRoster && nRoster <= 4) story.push(`Short-handed: only ${nRoster} players showed up, so game 5 was forfeited before a ball was struck.`);
+    else if (nSubs) story.push(`Short-handed: needed ${nSubs === 1 ? "a sub" : nSubs + " subs"} (${m.subs.map(x => x.name).join(", ")}) to field a lineup.`);
+    else if (nRoster === 5) story.push(`Thin turnout: just 5 players, so someone played twice.`);
+    else if (nRoster >= 8) story.push(`Full house: ${nRoster} players showed up.`);
+    // who carried the team
+    const carriers = players.filter(r => r.w >= 2 && r.l === 0);
+    if (carriers.length === 1 && sc.res === "W" && carriers[0].w >= Math.ceil(w * 0.6)) story.push(`${name(carriers[0].p)} carried the team, winning ${carriers[0].w} of the team's ${w} games.`);
+    else if (carriers.length === 1 && sc.res === "L") story.push(`${name(carriers[0].p)} went ${carriers[0].w}–0 on a losing night.`);
+    else if (carriers.length >= 2) story.push(`${carriers.map(r => name(r.p)).join(" and ")} each went unbeaten.`);
+    const cold = players.filter(r => r.g >= 2 && r.w === 0);
+    if (cold.length === 1 && sc.res === "W") story.push(`${name(cold[0].p)} went 0–${cold[0].l} but the team won anyway.`);
+  }
+  // streaks and history with this opponent (all seasons on record)
+  if (streak >= 3) story.push(`${streak}-match ${sc.res === "W" ? "winning" : "losing"} streak.`);
+  else if (sc.res === "W" && prevRes === "L" && prev >= 2) story.push(`Snapped a ${prev}-match losing streak.`);
+  else if (sc.res === "L" && prevRes === "W" && prev >= 2) story.push(`Ended a ${prev}-match winning streak.`);
+  const norm = x => (x || "").trim().toLowerCase();
+  const h2h = Object.entries(S.matches).filter(([xid, x]) => xid !== id && norm(x.opponent) === norm(opp) && asOf(x) && score(x).res)
+    .map(([, x]) => x).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  if (h2h.length) {
+    const hr = rec(h2h), last = h2h[h2h.length - 1], ls = score(last);
+    story.push(`History with ${opp}: ${fmtRec(hr)} before tonight; last meeting ${last.date} was a ${ls.w}–${ls.l} ${ls.res === "W" ? "win" : ls.res === "L" ? "loss" : "tie"}${ls.res === "L" && sc.res === "W" ? ", so tonight was revenge" : ls.res === "W" && sc.res === "L" ? `, so ${opp} got their payback tonight` : ls.res === sc.res && sc.res ? `, so tonight was a repeat` : ""}.`);
+  } else story.push(`First meeting with ${opp} on record.`);
+  story.push(`Team names: ${team} vs ${opp}. Consider whether either side lived up to (or betrayed) its name tonight.`);
+  const comments = [
+    ...games.filter(g => g.comment).map(g => ({ game: g.n, result: { W: "won", L: "lost", FF: "forfeited" }[g.r] || "", players: g.p.map(name), tag: g.tag === "hi" ? "highlight" : g.tag === "lo" ? "lowlight" : undefined, text: g.comment })),
+    ...((m.comment || "").trim() ? [{ match: true, tag: m.commentTag === "hi" ? "highlight" : m.commentTag === "lo" ? "lowlight" : undefined, text: m.comment.trim() }] : []),
+  ];
   const facts = {
+    storylines: story, comments: comments.length ? comments : undefined,
     lockedAt: m.lockedAt || null, team, opponent: opp, date: m.date || "", city: (S.league?.city || "").trim() || undefined, league: S.league?.name || "", season: S.seasons[sid]?.name || "",
     score: { us: sc.w, them: sc.l }, result: { W: "win", L: "loss", T: "tie" }[sc.res] || "unfinished",
     forfeit: m.forfeit ? (m.forfeit === "them" ? "opponent forfeited" : "we forfeited") : null,
     playoff: po ? { round, format: fmt === "double" ? "double elimination" : "single elimination", bracket: fmt === "double" ? bracket : null, outcome: tag, next: m.poNext || null } : null,
-    games: games.map(g => ({ game: g.n, players: g.p.map(name), result: { W: "won", L: "lost", FF: "forfeited", NP: "not played" }[g.r] || "not recorded", note: g.i === clinch && sc.res === "W" && sc.l > 0 ? "clinched the match" : g.i === decider ? "deciding game 5" : g.big === "stay-alive" ? "won facing elimination" : undefined, comment: g.comment || undefined })),
+    games: games.map(g => ({ game: g.n, players: g.p.map(name), result: { W: "won", L: "lost", FF: "forfeited", NP: "not played" }[g.r] || "not recorded", note: g.i === clinch && sc.res === "W" && sc.l > 0 ? "clinched the match" : g.i === decider ? "deciding game 5" : g.big === "stay-alive" ? "won facing elimination" : undefined })),
     players: players.map(r => ({ name: name(r.p), games: r.g, won: r.w, lost: r.l, scratches: r.s, gameWinStreak: r.streak >= 3 ? r.streak : undefined })),
     scratches: scr.map(x => ({ player: name(x.player), game: (x.game ?? -1) + 1 || undefined, type: scrLabel(x.type) })),
     teamScratches: { tonight: scrN, seasonAvgPerMatch: scrAvg != null ? +scrAvg.toFixed(1) : null },
@@ -1924,7 +1985,6 @@ function reportData(id, raw) {
     trends: trends.slice(0, 3).map(t => `${t.k}: ${t.v}`),
     record: po ? { playoffs: fmtRec(poRec), overall: fmtRec(allRec) } : { season: fmtRec(regRec) },
     matchStreak: streak >= 2 ? `${streak} straight ${sc.res === "W" ? "wins" : "losses"}` : null,
-    matchComment: (m.comment || "").trim() || undefined,
     highlights: highs.slice(0, 2), lowlights: lows.slice(0, 2),
   };
   const ai = !raw && aiReport(id);

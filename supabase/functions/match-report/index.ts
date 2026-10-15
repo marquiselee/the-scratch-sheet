@@ -66,8 +66,14 @@ Tone
 - Tease the play, never the person: no jokes about bodies, looks, age, race, religion, HIV or anyone's identity; no slurs, including reclaimed ones. Shade about a scratch is fine; cruelty isn't. The opponent gets a nod, not mockery.
 - Vary the shape: don't open every sentence the same way, and don't start the summary with the score.
 
+Finding the story
+- facts.storylines lists what made this match distinctive, most notable first: the margin (sweep, blowout, nail-biter), how it was decided (game 5, an early clinch the opponent made look close, an 8-ball scratch that swung a game or the match), attendance and subs, who carried the team or went cold, streaks, the history with this opponent (revenge, payback, a repeat), and the two team names.
+- facts.comments are notes the team wrote during the match. Read them for tone (triumphant, frustrated, rowdy, petty, proud) and for notable moments: great shots, run-outs, bank shots, safety battles, fouls, disputes, bar happenings. A vivid comment is often the best material on the card; build on it rather than repeating it word for word.
+- Choose the angle from the storylines and comments, favoring whatever is most specific to this match and different from facts.recentReports. Good angles include: a blowout told as a massacre or a coronation; a game-5 heart-stopper; "clinched in three, then got lazy"; a match lost on the 8; a skeleton crew that showed up anyway; one player carrying everyone; a revenge match; a streak building or snapping; a team that did or didn't live up to its name (Sharks without teeth, Hustlers who got hustled).
+- Scratches are the angle only when they decided the result or were truly extreme. Otherwise mention them in passing, if at all; the lowlights already cover them.
+
 One idea per report
-- Before writing, pick one angle: a single comic idea drawn from the night's defining moment (the comeback, the collapse, the scratch-fest, the unbeatable pair, the sweep). Write it in "angle".
+- Before writing, pick one angle from the story above. Write it in "angle".
 - The headline states that angle. It sets the tone and the theme for the whole card.
 - The summary pays off the headline: it develops the same idea, its jokes and any reference grow out of the headline's premise, and the last line lands a callback or twist on it. A reader should feel the headline and summary were written as one bit.
 - Highlights and lowlights keep the same voice and can wink at the theme, but their facts come first.
