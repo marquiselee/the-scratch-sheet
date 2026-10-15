@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v38 2026-10-15: Extra games are now a weighted random draw (lower games per match attended = better odds) instead of always lowest-first.
   v37 2026-10-15: Randomize gives extra (second) games to players with the fewest games per match attended this season; absences don't count for or against.
   v36 2026-10-15: Match date field sized like the other fields on phones; lineup buttons shortened (Randomize, Clear, Finalize, Edit…).
   v35 2026-10-15: "Clear Lineup" button empties every game's players (asks to confirm; hidden once the lineup is final).
@@ -480,11 +481,15 @@ function playLoad(m, matchId) {
   const rate = p => load[p]?.nights ? load[p].games / load[p].nights : avg;  // no history yet: treat as average
   return { rate, load };
 }
-// Who gets the extra games when fewer than 10 players are present: lowest games-per-night first, random among ties.
+// Who gets the extra games when fewer than 10 players are present: a weighted random draw.
+// Odds scale with 1 / (games per match attended)^EXTRA_BIAS, so a player averaging 1.0 is
+// 2^EXTRA_BIAS times as likely to be drawn as one averaging 2.0. Anyone can still be picked.
+const EXTRA_BIAS = 2;
 function pickExtras(m, matchId, k) {
   const { rate } = playLoad(m, matchId);
-  const r = {}; (m.roster || []).forEach(p => r[p] = Math.random());
-  return (m.roster || []).slice().sort((a, b) => (rate(a) - rate(b)) || (r[a] - r[b])).slice(0, k);
+  // weighted sampling without replacement: key = U^(1/w), keep the k largest keys
+  return (m.roster || []).map(p => ({ p, key: Math.pow(Math.random(), Math.pow(Math.max(rate(p), 0.25), EXTRA_BIAS)) }))
+    .sort((a, b) => b.key - a.key).slice(0, k).map(x => x.p);
 }
 function randomLineup(m, matchId) {
   const roster = m.roster || [], n = roster.length;
@@ -1828,7 +1833,7 @@ document.addEventListener("click", e => {
     if (filled && !arm("shuffle-" + S.view.matchId)) return;
     S.ui.armed = null;
     const res = randomLineup(m, S.view.matchId), games = res?.games; if (!games) { toast(m.roster?.length < 4 ? "Need at least 4 players present to build a lineup." : "Couldn't find a lineup that fits the rules. Check who's present."); render(); return; }
-    editMatch(x => { x.games = games; }); toast(res.extras?.length ? `Lineup randomized. Extra games: ${res.extras.map(p => pName(m.seasonId, p, m)).join(", ")} (fewest games per match attended)` : "Lineup randomized"); return;
+    editMatch(x => { x.games = games; }); toast(res.extras?.length ? `Lineup randomized. Extra games: ${res.extras.map(p => pName(m.seasonId, p, m)).join(", ")} (odds favor fewer games per match attended)` : "Lineup randomized"); return;
   }
   if (a === "copy-roster") {
     const from = S.seasons[b.dataset.from]; if (!from) return;
