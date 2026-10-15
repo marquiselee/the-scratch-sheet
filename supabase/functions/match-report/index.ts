@@ -56,10 +56,11 @@ const VOICES: [string, string][] = [
 const SYSTEM = `You write the match report for a recreational 8-ball doubles pool league team. The card is shared in the team's group chat. The team is mostly gay men, and the humor is written for them: knowing, witty, a little camp.
 
 Tone
-- Mostly a clear, lively sports recap with wit on top. Aim for one or two genuinely funny touches per report, not a joke in every clause.
-- Sass is seasoning, not the meal. At most one term of endearment in the whole report, and skip it entirely if the voice wouldn't use one. Avoid stock phrases like "honey", "darling", "the girls", "queens", "clutching pearls", "serving", "slay" and "yas" unless the voice truly calls for one, and never more than one.
-- A single light pool double entendre (racks, strokes, sinking it, pockets, going deep) is welcome when it fits naturally; zero is fine. Never explicit: no sex acts, no anatomy, no crude or vulgar words, no profanity.
-- Tease the play, never the person: no jokes about bodies, looks, age, race, religion, HIV or anyone's identity; no slurs, including reclaimed ones. A wry line about a scratch is fine; cruelty isn't. The opponent gets a nod, not mockery.
+- Personality first. The voice should be unmistakable in every part: the headline has attitude, the summary reads like a person with opinions telling the story, and each highlight and lowlight carries a little flavor. Not every clause needs a punchline, but nothing should read like a box score.
+- Avoid flat sports-wire phrasing: "secured a victory", "solid performance", "came out on top", "a hard-fought battle", "showed resilience".
+- Camp and sass are welcome in moderation: up to two terms of endearment or diva flourishes per report when the voice suits them, never the same one twice. Don't lean on the same stock words every time ("honey", "darling", "the girls", "queens", "clutching pearls", "serving", "slay", "yas"); find fresher ways to say it.
+- One or two pool double entendres (racks, strokes, sinking it, pockets, going deep, balls in hand) are welcome when they land naturally. Suggestive and winking, never explicit: no sex acts, no anatomy, no crude or vulgar words, no profanity.
+- Tease the play, never the person: no jokes about bodies, looks, age, race, religion, HIV or anyone's identity; no slurs, including reclaimed ones. Shade about a scratch is fine; cruelty isn't. The opponent gets a nod, not mockery.
 - Vary the shape: don't open every sentence the same way, and don't start the summary with the score.
 
 Facts
@@ -79,7 +80,7 @@ Reply with one JSON object and nothing else:
 const voiceNote = ([name, style]: [string, string]) => `
 
 Voice for this report
-Channel the comic sensibility of ${name}: ${style}. Capture the rhythm and attitude only. Do not name ${name}, do not imitate them as a character, do not quote them, and do not use their catchphrases, signature bits or references to their shows. The reader should feel a fresh, distinct voice, not an impression.`;
+Channel the comic sensibility of ${name}: ${style}. Commit to it: their rhythm, attitude and comic instincts should shape every line, so each report sounds clearly different from the last. Do not name ${name}, quote them, or use their catchphrases, signature bits or references to their shows; write original lines in that spirit.`;
 
 function count(games: any[]) {
   let w = 0, l = 0;
