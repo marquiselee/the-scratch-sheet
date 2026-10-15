@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v49 2026-10-15: Removed the report icon beside the score; the Report button covers it.
   v48 2026-10-15: Report facts include ranked storylines (margin, deciders, early clinches, 8-ball swings, attendance, carriers, streaks, head-to-head, team names) and all comments for Claude's angle.
   v47 2026-10-15: League city on the League tab (migration 006), sent with match facts for local color and weather.
   v46 2026-10-15: Report write-up failures now show a message with the reason instead of failing silently.
@@ -828,7 +829,7 @@ function viewMatches(sid) {
       <div class="mdate">${mon}<b>${day}</b></div>
       <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
         <div class="small muted">${esc(rest)}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${m.comment ? " · has note" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
-      <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span>${m.locked ? `<span class="rep-mark" title="Match report ready" aria-label="Match report ready">${REPORT_ICON}</span>` : ""}</span>
+      <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span></span>
     </button>${m.locked ? `<button class="btn scr-btn rep-btn" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
   }).join("");
   return `
