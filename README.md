@@ -45,6 +45,7 @@ Admins can tap **Forgot password?** on the sign-in screen to get a reset link by
 
 - `supabase/migrations/002_email_logins.sql` switches admin sign-in from usernames to email addresses.
 - `supabase/migrations/003_leagues_and_seasons.sql` adds leagues and league seasons, keeping all existing teams, rosters, matches and admins (they move into one league called "My League").
+- `supabase/migrations/004_final_lineup.sql` enforces finalized lineups (and auto-finalizes on match lock).
 
 ## Hosting
 

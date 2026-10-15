@@ -7,6 +7,7 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v23 2026-10-14: Finalize lineup. A final lineup (who's playing, pairings, game order) needs two confirmations to edit; locking a match finalizes it automatically.
   v22 2026-10-14: "Errors / game" column renamed EPG.
   v21 2026-10-14: Stats tables sort by any column (tap the heading; tap again to reverse). Players default to win % then name.
   v20 2026-10-14: Stats: "Errors / game" average replaces Error %.
@@ -675,7 +676,7 @@ function currentCard(m) {
     <div class="cur-head">
       <div style="min-width:0"><div class="eyebrow">${esc(full)}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
         <h2>vs ${esc(m.opponent || "Opponent TBD")}</h2>
-        <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
+        <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : m.lineupFinal ? ' · <span class="tag">Lineup final</span>' : ""}</div></div>
       <div class="score"><b>${m.forfeit ? "FF" : sc.w + "–" + sc.l}</b>${sc.res ? `<span class="res ${sc.res}">${resLabel(sc.res)}</span>` : ""}</div>
     </div>
     <div class="cur-games">${games}</div>
@@ -714,14 +715,15 @@ function viewMatch(id) {
     return `<option value="">— pick player —</option>` + ids.map(p => `<option value="${p}" ${p === cur ? "selected" : ""}>${names(p)}</option>`).join("");
   };
   const anyResults = m.games.some(g => g.result || g.p[0] || g.p[1]);
+  const LD = m.locked || m.lineupFinal ? "disabled" : "";
   const games = m.games.map((g, i) => `
     <div class="game ${chk.bad.has(i) ? "bad" : ""}">
       <div class="ball g${i + 1}" title="Game ${i + 1}"><span>${i + 1}</span></div>
       <div class="gmain">
         <div class="pair">
-          <select id="g${i}p0" class="w" data-act="player" data-g="${i}" data-s="0" aria-label="Game ${i + 1} first player">${optsFor(g.p[0])}</select>
+          <select id="g${i}p0" class="w" ${LD} data-act="player" data-g="${i}" data-s="0" aria-label="Game ${i + 1} first player">${optsFor(g.p[0])}</select>
           <span class="vs">&amp;</span>
-          <select id="g${i}p1" class="w" data-act="player" data-g="${i}" data-s="1" aria-label="Game ${i + 1} second player">${optsFor(g.p[1])}</select>
+          <select id="g${i}p1" class="w" ${LD} data-act="player" data-g="${i}" data-s="1" aria-label="Game ${i + 1} second player">${optsFor(g.p[1])}</select>
         </div>
         <div class="pair opp">
           <input type="text" id="g${i}o0" class="w" data-field="opp" data-g="${i}" data-s="0" placeholder="Opponent player (optional)" value="${esc(g.opp?.[0])}">
@@ -739,8 +741,8 @@ function viewMatch(id) {
         </div>
         <div class="tools">
           <button class="btn icon ghost ${g.comment ? "has-note" : ""}" data-act="note" data-g="${i}" title="${g.comment ? "Edit" : "Add"} game comment" aria-label="Game ${i + 1} comment">✎</button>
-          <button class="btn icon ghost w" data-act="move" data-g="${i}" data-v="-1" ${i === 0 ? "disabled" : ""} aria-label="Move game ${i + 1} earlier">↑</button>
-          <button class="btn icon ghost w" data-act="move" data-g="${i}" data-v="1" ${i === GAMES - 1 ? "disabled" : ""} aria-label="Move game ${i + 1} later">↓</button>
+          <button class="btn icon ghost w" data-act="move" data-g="${i}" data-v="-1" ${i === 0 || LD ? "disabled" : ""} aria-label="Move game ${i + 1} earlier">↑</button>
+          <button class="btn icon ghost w" data-act="move" data-g="${i}" data-v="1" ${i === GAMES - 1 || LD ? "disabled" : ""} aria-label="Move game ${i + 1} later">↓</button>
         </div>
       </div>
     </div>`).join("");
@@ -769,15 +771,17 @@ function viewMatch(id) {
 
   <section class="panel">
     <div class="row spread"><h3>Who's playing <span class="muted small">${roster.length} selected</span></h3>
-      <div class="row"><button class="btn ghost small w" data-act="all-in">Select all</button><button class="btn ghost small w" data-act="all-out">Clear</button></div></div>
-    ${players.length || (m.subs || []).length ? `<div class="chips">${players.map(p => `<label class="chip w ${roster.includes(p.id) ? "on" : ""}"><input type="checkbox" data-act="roster" data-id="${p.id}" ${roster.includes(p.id) ? "checked" : ""}>${esc(p.name)}</label>`).join("")}${(m.subs || []).map(p => `<span class="chip on">${esc(p.name)} <span class="tag">sub</span><button class="x w" data-act="rm-sub" data-id="${p.id}" aria-label="Remove sub ${esc(p.name)}">×</button></span>`).join("")}</div>`
+      ${LD ? `<span class="tag">Lineup final</span>` : `<div class="row"><button class="btn ghost small w" data-act="all-in">Select all</button><button class="btn ghost small w" data-act="all-out">Clear</button></div>`}</div>
+    ${players.length || (m.subs || []).length ? `<div class="chips">${players.map(p => `<label class="chip w ${roster.includes(p.id) ? "on" : ""}"><input type="checkbox" data-act="roster" data-id="${p.id}" ${roster.includes(p.id) ? "checked" : ""} ${LD}>${esc(p.name)}</label>`).join("")}${(m.subs || []).map(p => `<span class="chip on">${esc(p.name)} <span class="tag">sub</span>${LD ? "" : `<button class="x w" data-act="rm-sub" data-id="${p.id}" aria-label="Remove sub ${esc(p.name)}">×</button>`}</span>`).join("")}</div>`
       : `<p class="muted small" style="margin:0">This season has no players yet. Add them in Team admin.</p>`}
-    ${!m.playoff && roster.filter(id => !isSub(m, id)).length < 5 ? `<div class="prow"><input type="text" id="sub-name" class="w" placeholder="Sub name (registered player or league sub)" data-enter="add-sub"><button class="btn w" data-act="add-sub">Add sub</button></div><p class="small muted" style="margin:0">Fewer than 5 present, so a registered sub may play (rule III.C.1).</p>` : ""}
+    ${!LD && !m.playoff && roster.filter(id => !isSub(m, id)).length < 5 ? `<div class="prow"><input type="text" id="sub-name" class="w" placeholder="Sub name (registered player or league sub)" data-enter="add-sub"><button class="btn w" data-act="add-sub">Add sub</button></div><p class="small muted" style="margin:0">Fewer than 5 present, so a registered sub may play (rule III.C.1).</p>` : ""}
   </section>
 
   <section class="panel">
     <div class="row spread"><h3>Lineup · ${GAMES} games of doubles</h3>
-      <button class="btn primary w ${armedShuffle ? "armed" : ""}" data-act="shuffle" ${roster.length < 4 || roster.length > MAX_ROSTER || m.forfeit ? "disabled" : ""}>${armedShuffle ? "Replace current lineup?" : anyResults ? "Re-draw pairings" : "Draw pairings"}</button></div>
+      ${LD ? "" : `<div class="row"><button class="btn w ${armedShuffle ? "armed" : ""}" data-act="shuffle" ${roster.length < 4 || roster.length > MAX_ROSTER || m.forfeit ? "disabled" : ""}>${armedShuffle ? "Replace current lineup?" : anyResults ? "Re-draw pairings" : "Draw pairings"}</button>
+        <button class="btn primary w" data-act="lineup-final" ${m.forfeit ? "disabled" : ""}>Finalize lineup</button></div>`}</div>
+    ${lineupBar(id, m)}
     <div class="notes">
       ${chk.errs.map(e => `<div class="e">${esc(e)}</div>`).join("")}
       ${chk.notes.map(e => `<div class="n">${esc(e)}</div>`).join("")}
@@ -791,6 +795,15 @@ function viewMatch(id) {
     ${(m.scratches || []).length ? `<div class="cur-scr">${m.scratches.map(x => `<span class="scr"><button class="scr-edit w" data-act="edit-scratch" data-m="${id}" data-id="${x.id}" aria-label="Edit scratch">G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)} <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${id}" data-id="${x.id}" aria-label="Remove scratch">×</button></span>`).join("")}</div>` : `<p class="small muted" style="margin:0">No scratches logged.</p>`}
   </section>
   </fieldset>`;
+}
+
+function lineupBar(id, m) {
+  if (!m.lineupFinal || m.locked) return m.lineupFinal && m.locked ? `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Lineup final</b><span class="small muted">The match is locked, so the lineup can't change.</span></div></div>` : "";
+  const step = S.ui.relineup?.id === id ? S.ui.relineup.step : 0;
+  if (step === 1) return `<div class="lockbar warn" role="alert"><div class="msg"><b>Warning 1 of 2: edit the final lineup?</b><span class="small">Editing reopens who's playing, the pairings and the game order.</span></div><div class="row"><button class="btn" data-act="relineup-cancel">Keep it final</button><button class="btn danger armed w" data-act="relineup-next">Continue</button></div></div>`;
+  if (step === 2) return `<div class="lockbar warn" role="alert"><div class="msg"><b>Warning 2 of 2: final confirmation</b><span class="small">Changes after games start can move players between games. Make sure the scoresheet matches. Edit the lineup now?</span></div><div class="row"><button class="btn" data-act="relineup-cancel">Keep it final</button><button class="btn danger armed w" data-act="relineup-confirm">Edit lineup</button></div></div>`;
+  const when = m.lineupFinalAt ? new Date(m.lineupFinalAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Lineup final${when ? " " + esc(when) : ""}</b><span class="small muted">Who's playing, pairings and game order are set. Results, opponents and comments can still be entered.</span></div><button class="btn w" data-act="relineup-start">Edit lineup…</button></div>`;
 }
 
 function lockBar(id, m) {
@@ -1391,6 +1404,7 @@ function saveLeagueName(v) {
 }
 
 /* ---------- actions ---------- */
+function editLineup(fn) { const m = S.matches[S.view.matchId]; if (m?.lineupFinal && !m.locked) { toast("The lineup is final. Tap Edit lineup to change it."); render(); return; } editMatch(fn); }
 function editMatch(fn) { const id = S.view.matchId, m = S.matches[id]; if (!m) return; if (m.locked) { toast("This match is locked. Unlock it to make changes."); render(); return; } fn(m); persist("matches", id); render(); }
 function editSeason(id, fn) { const s = S.seasons[id]; if (!s) return; fn(s); persist("seasons", id); render(); }
 function arm(key) { if (S.ui.armed === key) return true; S.ui.armed = key; render(); clearTimeout(arm.t); arm.t = setTimeout(() => { if (S.ui.armed === key) { S.ui.armed = null; render(); } }, 4000); return false; }
@@ -1443,18 +1457,34 @@ document.addEventListener("click", e => {
   if (a === "close-modal") { if (e.target !== b) return; S.ui.modal = null; renderLayer(); return; }
   if (a === "tab") { S.view.tab = b.dataset.v; S.view.matchId = null; S.ui.armed = null; S.ui.unlock = null; render(); window.scrollTo(0, 0); return; }
   if (a === "open") { S.view.matchId = b.dataset.id; render(); window.scrollTo(0, 0); return; }
-  if (a === "back") { S.view.matchId = null; S.ui.unlock = null; render(); return; }
+  if (a === "back") { S.view.matchId = null; S.ui.unlock = null; S.ui.relineup = null; render(); return; }
   if (a === "toggle-season") { const id = b.dataset.id, open = S.ui.openSeason === id || (S.ui.openSeason == null && id === curSeasonId()); S.ui.openSeason = open ? "" : id; render(); return; }
   if (a === "note") { S.ui.modal = { matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g }; renderLayer(); return; }
   if (!S.canWrite) return;
   if (a === "save-note") { const v = $("#modal-text").value.trim(), md = S.ui.modal; S.ui.modal = null; renderLayer(); editMatch(m => { if (md.g === "match") m.comment = v; else m.games[md.g].comment = v; }); return; }
+  if ((a === "add-sub" || a === "rm-sub") && S.matches[S.view.matchId]?.lineupFinal) { toast("The lineup is final. Tap Edit lineup to change it."); return; }
   if (a === "add-sub") {
     const inp = $("#sub-name"), name = inp?.value.trim(); if (!name) { inp?.focus(); return; }
     editMatch(m => { const id = "sub-" + uid(); (m.subs ||= []).push({ id, name }); m.roster = [...(m.roster || []), id]; });
     setTimeout(() => $("#sub-name")?.focus(), 0); return;
   }
   if (a === "rm-sub") { const id = b.dataset.id; editMatch(m => { m.subs = (m.subs || []).filter(x => x.id !== id); m.roster = (m.roster || []).filter(x => x !== id); m.games.forEach(gm => { gm.p = gm.p.map(x => x === id ? "" : x); }); }); return; }
-  if (a === "lock") { const id = S.view.matchId, m = S.matches[id]; if (!m) return; m.locked = true; m.lockedAt = Date.now(); S.ui.unlock = null; persist("matches", id); render(); toast("Match locked"); return; }
+  if (a === "lineup-final") {
+    const m = S.matches[S.view.matchId]; if (!m || m.locked || m.lineupFinal) return;
+    const chk = check(m);
+    if (chk.errs.length) { toast("Fix the lineup problems shown above before finalizing."); return; }
+    const n = (m.roster || []).length, need = n === 4 ? 4 : GAMES;
+    if (n < 4 || m.games.slice(0, need).some(g => !g.p[0] || !g.p[1])) { toast("Fill every game with two players before finalizing."); return; }
+    editMatch(x => { x.lineupFinal = true; x.lineupFinalAt = Date.now(); }); toast("Lineup finalized"); return;
+  }
+  if (a === "relineup-start") { S.ui.relineup = { id: S.view.matchId, step: 1 }; render(); return; }
+  if (a === "relineup-next") { S.ui.relineup = { id: S.view.matchId, step: 2 }; render(); return; }
+  if (a === "relineup-cancel") { S.ui.relineup = null; render(); return; }
+  if (a === "relineup-confirm") {
+    const id = S.view.matchId; if (S.ui.relineup?.id !== id || S.ui.relineup.step !== 2) return;
+    S.ui.relineup = null; editMatch(x => { x.lineupFinal = false; delete x.lineupFinalAt; }); toast("Lineup reopened for editing"); return;
+  }
+  if (a === "lock") { const id = S.view.matchId, m = S.matches[id]; if (!m) return; m.locked = true; m.lockedAt = Date.now(); if (!m.lineupFinal) { m.lineupFinal = true; m.lineupFinalAt = m.lockedAt; } S.ui.relineup = null; S.ui.unlock = null; persist("matches", id); render(); toast("Match locked"); return; }
   if (/^unlock-(start|next|confirm)$/.test(a) && !isAdmin()) return;
   if (a === "unlock-start") { S.ui.unlock = { id: S.view.matchId, step: 1 }; render(); return; }
   if (a === "unlock-next") { S.ui.unlock = { id: S.view.matchId, step: 2 }; render(); return; }
@@ -1476,10 +1506,10 @@ document.addEventListener("click", e => {
   }
   if (a === "del-match") { if (!isAdmin()) return; if (S.matches[S.view.matchId]?.locked) return; if (!arm("del-" + S.view.matchId)) return; const id = S.view.matchId; delete S.matches[id]; persist("matches", id); S.view.matchId = null; S.ui.armed = null; render(); toast("Match deleted"); return; }
   if (a === "result") { editMatch(m => { m.games[g].result = m.games[g].result === b.dataset.v ? "" : b.dataset.v; }); return; }
-  if (a === "move") { editMatch(m => { const j = g + +b.dataset.v; [m.games[g], m.games[j]] = [m.games[j], m.games[g]]; }); return; }
-  if (a === "all-in" || a === "all-out") { editMatch(m => { m.roster = a === "all-in" ? activePlayers(S.seasons[m.seasonId]).map(p => p.id) : []; }); return; }
+  if (a === "move") { editLineup(m => { const j = g + +b.dataset.v; [m.games[g], m.games[j]] = [m.games[j], m.games[g]]; }); return; }
+  if (a === "all-in" || a === "all-out") { editLineup(m => { m.roster = a === "all-in" ? activePlayers(S.seasons[m.seasonId]).map(p => p.id) : []; }); return; }
   if (a === "shuffle") {
-    const m = S.matches[S.view.matchId]; if (m.locked) return; const filled = m.games.some(x => x.result || x.p[0] || x.p[1]);
+    const m = S.matches[S.view.matchId]; if (m.locked || m.lineupFinal) return; const filled = m.games.some(x => x.result || x.p[0] || x.p[1]);
     if (filled && !arm("shuffle-" + S.view.matchId)) return;
     S.ui.armed = null;
     const games = randomLineup(m); if (!games) { toast(m.roster?.length < 4 ? "Need at least 4 players present to build a lineup." : "Couldn't find a lineup that fits the rules. Check who's present."); render(); return; }
@@ -1509,8 +1539,8 @@ document.addEventListener("change", e => {
   if (t.id === "gate-league") { S.gate.leagueId = t.value; S.gate.teamId = ""; try { localStorage.setItem("ss-last-league", t.value); } catch (x) {} refreshGateTeams().then(render); return; }
   if (t.id === "mgr-league") { S.mgr.leagueId = t.value; S.mgr.seasonId = null; S.mgr.data = null; render(); return; }
   if (!S.canWrite) return;
-  if (t.dataset.act === "player") { editMatch(m => { m.games[+t.dataset.g].p[+t.dataset.s] = t.value; m.names ||= {}; if (t.value) m.names[t.value] = pName(m.seasonId, t.value, m); }); return; }
-  if (t.dataset.act === "roster") { editMatch(m => { const id = t.dataset.id; m.roster = t.checked ? [...new Set([...(m.roster || []), id])] : (m.roster || []).filter(x => x !== id); }); return; }
+  if (t.dataset.act === "player") { editLineup(m => { m.games[+t.dataset.g].p[+t.dataset.s] = t.value; m.names ||= {}; if (t.value) m.names[t.value] = pName(m.seasonId, t.value, m); }); return; }
+  if (t.dataset.act === "roster") { editLineup(m => { const id = t.dataset.id; m.roster = t.checked ? [...new Set([...(m.roster || []), id])] : (m.roster || []).filter(x => x !== id); }); return; }
   if (t.dataset.act === "mtype") { editMatch(m => { m.playoff = t.value === "playoff"; }); return; }
   if (t.dataset.act === "forfeit") { editMatch(m => { m.forfeit = t.value; }); return; }
   if (t.dataset.field === "date") { editMatch(m => { m.date = t.value; }); return; }
