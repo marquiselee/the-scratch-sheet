@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v40 2026-10-15: Report icon in the Matches list moved next to the score.
   v39 2026-10-15: Match report. Locking a match creates a shareable 9:16 report (score, write-up, games, stats, season trends, highlights/lowlights); View report buttons, report icon in the match list, Save image; comments can be tagged highlight/lowlight; playoff round/format/bracket fields.
   v38 2026-10-15: Extra games are now a weighted random draw (lower games per match attended = better odds) instead of always lowest-first.
   v37 2026-10-15: Randomize gives extra (second) games to players with the fewest games per match attended this season; absences don't count for or against.
@@ -115,6 +116,8 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 .rp-stage{flex:none;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5)}
 .rep-ico{vertical-align:-3px;color:var(--chalk)}
 .rep-btn{display:inline-flex;align-items:center;gap:6px}
+.score-wrap{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.rep-mark{display:inline-grid;place-items:center}
 .lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .lrow:first-of-type{border-top:0}
 @media (max-width:640px){.lrow{grid-template-columns:1fr}.lrow .row{justify-content:flex-start}}
@@ -168,7 +171,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
   .mrow{gap:6px}
   .mcard{grid-template-columns:auto minmax(0,1fr);gap:4px 12px;padding:10px 12px}
   .mcard .mdate{grid-row:span 2}
-  .mcard .pill{grid-column:2;justify-self:start}
+  .mcard .score-wrap{grid-column:2;justify-self:start}
   .scr-btn{width:74px;padding:6px 8px;font-size:13px;line-height:1.2;white-space:normal;text-align:center}
 }
 .mdate{font:500 12px/1.2 var(--f-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em;min-width:54px;text-align:center}
@@ -805,9 +808,9 @@ function viewMatches(sid) {
     const [mon, day, rest] = fmtDay(m.date), sc = score(m), no = matchNo(m);
     return `<div class="mrow"><button class="mcard" data-act="open" data-id="${m.id}">
       <div class="mdate">${mon}<b>${day}</b></div>
-      <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}${m.locked ? ` <span title="Match report ready">${REPORT_ICON}</span>` : ""}</div>
+      <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
         <div class="small muted">${esc(rest)}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${m.comment ? " · has note" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
-      <span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span>
+      <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span>${m.locked ? `<span class="rep-mark" title="Match report ready" aria-label="Match report ready">${REPORT_ICON}</span>` : ""}</span>
     </button>${m.locked ? `<button class="btn scr-btn rep-btn" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
   }).join("");
   return `
