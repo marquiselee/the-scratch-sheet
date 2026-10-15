@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v43 2026-10-15: Report lowlights always cover scratch trouble: the player with the most scratches, 8-ball scratches, and scratch-heavy games (won or lost).
   v42 2026-10-15: Report stat back to "Cleanest" with a scratch-count subline; averages labelled "avg".
   v41 2026-10-15: Report stat "Cleanest" renamed "Fewest scratches" with a clearer subline.
   v40 2026-10-15: Report icon in the Matches list moved next to the score.
@@ -1843,9 +1844,25 @@ function reportData(id) {
   if (comeback && highs.length < 2) highs.push(`Battled back from ${trail.join("–")} down.`);
   if (cleanest && cleanest.s === 0 && cleanest.g >= 2 && highs.length < 2) highs.push(`${name(cleanest.p)} played ${cleanest.g} games without a scratch.`);
   if (sc.res === "W" && sc.l === 0 && highs.length < 2) highs.push(`A clean sweep, every game won.`);
-  scr.filter(x => x.type === "eight").forEach(x => { const g = games[x.game]; if (g && isLossRes(g.r) && lows.length < 2) lows.push(`A scratch on the 8 cost game ${g.n}.`); });
+  // lowlights from the scoresheet: worst scratch night first, then 8-ball scratches, then scratch-heavy games
+  const lowsAuto = [];
+  const worstP = players.slice().sort((a, b) => b.s - a.s || a.g - b.g)[0];
+  if (worstP && (worstP.s >= 3 || (worstP.s >= 2 && worstP.s >= scrN / 2)))
+    lowsAuto.push(`${name(worstP.p)} had ${worstP.s} scratches in ${worstP.g} game${worstP.g === 1 ? "" : "s"}.`);
+  scr.filter(x => x.type === "eight").forEach(x => {
+    const g = games[x.game]; if (!g) return;
+    const who = name(x.player);
+    lowsAuto.push(isLossRes(g.r) ? `A scratch on the 8 by ${who} cost game ${g.n}.` : `${who} scratched on the 8 in game ${g.n}.`);
+  });
   const byGame = {}; scr.forEach(x => byGame[x.game] = (byGame[x.game] || 0) + 1);
-  Object.entries(byGame).sort((a, b) => b[1] - a[1]).forEach(([gi, n]) => { const g = games[gi]; if (n >= 2 && g && isLossRes(g.r) && lows.length < 2 && !lows.some(t => t.includes(`game ${g.n}`))) lows.push(`${n} scratches in game ${g.n}.`); });
+  Object.entries(byGame).sort((a, b) => b[1] - a[1]).forEach(([gi, n]) => {
+    const g = games[gi]; if (!g || n < 2 || lowsAuto.some(t => t.includes(`game ${g.n}`))) return;
+    lowsAuto.push(isLossRes(g.r) ? `${n} scratches in game ${g.n}, a game that got away.` : `${n} scratches in game ${g.n}, even in a win.`);
+  });
+  if (!lowsAuto.length && scrN >= 4) lowsAuto.push(`${scrN} scratches on the night.`);
+  // the night's worst scratch count always makes the card, ahead of tagged comments
+  if (lowsAuto.length && /had \d+ scratches/.test(lowsAuto[0])) lows.unshift(lowsAuto.shift());
+  for (const t of lowsAuto) { if (lows.length >= 2) break; if (!lows.includes(t)) lows.push(t); }
   const d = new Date((m.date || "") + "T12:00");
   return {
     team, opp, sc, tag, tagTone, strip, headline, summary: [s1, s2].filter(Boolean).join(" "),
