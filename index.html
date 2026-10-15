@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v42 2026-10-15: Report stat back to "Cleanest" with a scratch-count subline; averages labelled "avg".
   v41 2026-10-15: Report stat "Cleanest" renamed "Fewest scratches" with a clearer subline.
   v40 2026-10-15: Report icon in the Matches list moved next to the score.
   v39 2026-10-15: Match report. Locking a match creates a shareable 9:16 report (score, write-up, games, stats, season trends, highlights/lowlights); View report buttons, report icon in the match list, Save image; comments can be tagged highlight/lowlight; playoff round/format/bracket fields.
@@ -1788,8 +1789,8 @@ function reportData(id) {
     }
   }
   // stats tiles
-  const tiles = [{ k: "Scratches", v: String(scrN), sub: scrAvg != null && scrAvg >= 0.05 ? `vs ${scrAvg.toFixed(1)} season avg` : played ? `${(scrN / played).toFixed(1)} per game` : "", tone: scrAvg != null && scrAvg >= 0.05 && scrN > scrAvg + 1 ? "bad" : "" }];
-  if (cleanest) tiles.push({ k: "Fewest scratches", v: name(cleanest.p), sub: `${cleanest.s} scratch${cleanest.s === 1 ? "" : "es"} in ${cleanest.g} game${cleanest.g === 1 ? "" : "s"}` });
+  const tiles = [{ k: "Scratches", v: String(scrN), sub: scrAvg != null && scrAvg >= 0.05 ? `vs ${scrAvg.toFixed(1)} avg per match` : played ? `${(scrN / played).toFixed(1)} avg per game` : "", tone: scrAvg != null && scrAvg >= 0.05 && scrN > scrAvg + 1 ? "bad" : "" }];
+  if (cleanest) tiles.push({ k: "Cleanest", v: name(cleanest.p), sub: `${cleanest.s} scratch${cleanest.s === 1 ? "" : "es"} in ${cleanest.g} game${cleanest.g === 1 ? "" : "s"}` });
   if (hot && hot.w) {
     const g4 = games.find(g => g.r === "W" && g.p.includes(hot.p) && (g.i === decider || g.i === clinch || g.i === 3));
     tiles.push(sc.res === "L" ? { k: "Bright spot", v: name(hot.p), sub: hot.w > 1 ? `${hot.w}–${hot.l} tonight` : g4 ? `won game ${g4.n}` : "won a game" } : { k: "Hot hand", v: name(hot.p), sub: `${hot.w}–${hot.l} tonight` });
@@ -1804,8 +1805,8 @@ function reportData(id) {
   else if (sc.res === "L" && prevRes === "W" && prev >= 2) trends.push({ icon: "back", k: "Streak snapped", v: `Ends a ${prev}-match win streak`, s2: `It snaps a ${prev}-match win streak.` });
   else if (sc.res === "L" && streak >= 2) trends.push({ icon: "back", k: "Rough patch", v: `${streak} straight losses`, s2: `That's ${streak} losses in a row, so next week is a reset.` });
   if (scrAvg != null && scrAvg >= 0.05 && Math.abs(scrN - scrAvg) >= 1.5) trends.push(scrN < scrAvg
-    ? { icon: "down", k: "Scratches down", v: `${scrN} tonight vs a ${scrAvg.toFixed(1)} season average`, s2: `${scrN} scratches was well under the season average.` }
-    : { icon: "up", k: "Scratches up", v: `${scrN} tonight vs a ${scrAvg.toFixed(1)} season average`, s2: `${scrN} scratches made it an uphill night.` });
+    ? { icon: "down", k: "Scratches down", v: `${scrN} tonight vs ${scrAvg.toFixed(1)} avg per match`, s2: `${scrN} scratches was well under the team's avg per match.` }
+    : { icon: "up", k: "Scratches up", v: `${scrN} tonight vs ${scrAvg.toFixed(1)} avg per match`, s2: `${scrN} scratches made it an uphill night.` });
   if (po && tag === "ELIMINATED") trends.unshift({ icon: "cal", k: "Season wrap", v: `${fmtRec(allRec)} overall this season`, s2: `The season ends at ${fmtRec(allRec)}.` });
   if (trends.length < 2) trends.push({ icon: "cal", k: po ? "Playoff record" : "Season record", v: po ? `${fmtRec(poRec)} in the playoffs` : `${fmtRec(regRec)} this season`, s2: po ? `The team is ${fmtRec(poRec)} in the playoffs.` : `The season record moves to ${fmtRec(regRec)}.` });
   // headline
