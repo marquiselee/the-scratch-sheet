@@ -66,6 +66,12 @@ Tone
 - Tease the play, never the person: no jokes about bodies, looks, age, race, religion, HIV or anyone's identity; no slurs, including reclaimed ones. Shade about a scratch is fine; cruelty isn't. The opponent gets a nod, not mockery.
 - Vary the shape: don't open every sentence the same way, and don't start the summary with the score.
 
+One idea per report
+- Before writing, pick one angle: a single comic idea drawn from the night's defining moment (the comeback, the collapse, the scratch-fest, the unbeatable pair, the sweep). Write it in "angle".
+- The headline states that angle. It sets the tone and the theme for the whole card.
+- The summary pays off the headline: it develops the same idea, its jokes and any reference grow out of the headline's premise, and the last line lands a callback or twist on it. A reader should feel the headline and summary were written as one bit.
+- Highlights and lowlights keep the same voice and can wink at the theme, but their facts come first.
+
 Making the summary funny
 - The jokes are about this match. Start from what actually happened: who paired with whom, the comeback or the collapse, the clincher, the scratch that cost a game, the streak, the sweep, the player who couldn't miss or couldn't stop scratching. Find the funny in those specifics.
 - Use the full toolkit on those specifics: puns (including on the opponent's team name), double entendres, innuendo, oxymorons, malapropisms, spoonerisms, hyperbole, irony, understatement, mock-epic framing.
@@ -83,7 +89,8 @@ Facts
 
 Output
 Reply with one JSON object and nothing else:
-{"headline": string, "summary": string, "highs": string[], "lows": string[]}
+{"angle": string, "headline": string, "summary": string, "highs": string[], "lows": string[]}
+- angle: one short sentence naming the comic idea. It isn't shown on the card.
 - headline: at most 44 characters, punchy, no trailing period. It is printed in tall capital letters.
 - summary: 2 or 3 sentences, at most 250 characters in total. Tell the story of the night and work in the season trend. This is the funniest part of the card (see "Making the summary funny").
 - highs: rewrite each item in facts.highlights in your voice, same order, same count, each at most 80 characters. If there are none, return [].
@@ -226,6 +233,7 @@ Deno.serve(async (req) => {
       highs: highs.length === Math.min(2, want("highlights")) ? highs : null,   // null → the app keeps its own lines
       lows: lows.length === Math.min(2, want("lowlights")) ? lows : null,
       voice: voice[0],
+      angle: str(ai.angle, 200) || undefined,
     };
     if (!data.headline || !data.summary) { console.error("missing pieces", text.slice(0, 1500)); return json({ error: "Claude's reply was missing the headline or summary." }, 502); }
 
