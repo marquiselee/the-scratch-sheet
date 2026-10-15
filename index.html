@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v50 2026-10-15: Report buttons read "Match Report".
   v49 2026-10-15: Removed the report icon beside the score; the Report button covers it.
   v48 2026-10-15: Report facts include ranked storylines (margin, deciders, early clinches, 8-ball swings, attendance, carriers, streaks, head-to-head, team names) and all comments for Claude's angle.
   v47 2026-10-15: League city on the League tab (migration 006), sent with match facts for local color and weather.
@@ -817,7 +818,7 @@ function currentCard(m) {
     <div class="cur-games">${games}</div>
     ${(m.scratches || []).length ? `<div class="cur-scr">${m.scratches.slice().reverse().map(x => `<span class="scr">${m.locked ? "" : `<button class="scr-edit w" data-act="edit-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Edit scratch">`}G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)}${m.locked ? "" : ` <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Remove scratch">×</button>`}</span>`).join("")}</div>` : ""}
     <div class="row"><button class="btn primary" data-act="open" data-id="${m.id}">${m.locked ? "View match" : m.games.some(g => g.p[0]) ? "Open match" : "Set lineup"}</button>
-      ${m.locked ? `<button class="btn rep-btn" data-act="report-open" data-id="${m.id}">${REPORT_ICON}Match report</button>` : `<button class="btn w" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"}>Log scratch</button>`}
+      ${m.locked ? `<button class="btn rep-btn" data-act="report-open" data-id="${m.id}">${REPORT_ICON}Match Report</button>` : `<button class="btn w" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"}>Log scratch</button>`}
       ${(m.scratches || []).length ? `<span class="small muted">${m.scratches.length} scratch${m.scratches.length === 1 ? "" : "es"} this match</span>` : ""}</div>
   </div>`;
 }
@@ -830,7 +831,7 @@ function viewMatches(sid) {
       <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
         <div class="small muted">${esc(rest)}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${m.comment ? " · has note" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
       <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span></span>
-    </button>${m.locked ? `<button class="btn scr-btn rep-btn" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
+    </button>${m.locked ? `<button class="btn scr-btn rep-btn" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Match Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
   }).join("");
   return `
   <section style="display:grid;gap:12px">
