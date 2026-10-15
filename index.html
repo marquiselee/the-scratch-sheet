@@ -7,6 +7,7 @@
 <meta name="description" content="The Scratch Sheet: lineups, results, scratches and stats for 8-ball doubles league teams.">
 <title>The Scratch Sheet</title>
 <!-- Changelog
+  v22 2026-10-14: "Errors / game" column renamed EPG.
   v21 2026-10-14: Stats tables sort by any column (tap the heading; tap again to reverse). Players default to win % then name.
   v20 2026-10-14: Stats: "Errors / game" average replaces Error %.
   v19 2026-10-14: "Exit" replaces "Leave"; scratch pop-up shows each player's running count for the game and has "Log & add another" for repeat scratches.
@@ -891,10 +892,10 @@ function viewStandings(sid) {
     <div class="panel"><div class="eyebrow">Games</div><div class="score"><b>${gw}–${gl}</b><span class="muted small">${gw + gl ? Math.round(gw / (gw + gl) * 100) + "% won · breaks ties in league standings" : ""}</span></div></div>
   </div>
   <section class="panel"><h3>Players</h3>
-    <div class="tbl"><table><thead><tr>${th("players", "name", "Player", PD)}${th("players", "nights", "Matches", PD)}${th("players", "gp", "Games", PD)}${th("players", "w", "W", PD)}${th("players", "l", "L", PD)}${th("players", "win", "Win %", PD)}${th("players", "err", "Errors", PD, "Scratches of any type")}${th("players", "epg", "Errors / game", PD, "Average errors per game played")}</tr></thead><tbody>
+    <div class="tbl"><table><thead><tr>${th("players", "name", "Player", PD)}${th("players", "nights", "Matches", PD)}${th("players", "gp", "Games", PD)}${th("players", "w", "W", PD)}${th("players", "l", "L", PD)}${th("players", "win", "Win %", PD)}${th("players", "err", "Errors", PD, "Scratches of any type")}${th("players", "epg", "EPG", PD, "Errors per game: average scratches per game played")}</tr></thead><tbody>
     ${rows.map(r => `<tr><td>${esc(pName(sid, r.id))}</td><td>${r.nights}</td><td>${r.gp}</td><td>${r.w}</td><td>${r.l}</td><td>${r.gp ? Math.round(r.w / r.gp * 100) + "%" : "—"}</td><td>${r.err}</td><td>${r.gp ? (r.err / r.gp).toFixed(2) : "—"}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">No players yet.</td></tr>`}
     </tbody></table></div>
-    <p class="small muted" style="margin:0">Matches counts nights a player was marked as playing. Games count only games with a recorded result. Errors are scratches of any type. Errors / game is the average number of errors per game played.</p>
+    <p class="small muted" style="margin:0">Matches counts nights a player was marked as playing. Games count only games with a recorded result. Errors are scratches of any type. EPG (errors per game) is the average number of errors per game played.</p>
   </section>
   ${scratchStats(sid, ms)}
   <section class="panel"><h3>Match results</h3>
