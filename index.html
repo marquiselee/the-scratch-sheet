@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v30 2026-10-15: Rules parser handles other rulebook layouts (Article/Section, decimal 1.1, ALL-CAPS or Markdown headings, bullets, (a)/(i) outlines); auto-built Contents with sections and topics; upload preview shows what was found.
   v29 2026-10-15: Rules tab reflows uploaded text (no hard line breaks), shows sections and outline levels with hanging labels, a section jump list, and in-browser search with highlighted matches.
   v28 2026-10-15: Header banner back to the green background (maroon-sided logo kept).
   v27 2026-10-15: Black header banner; maroon-sided logo (light outline) in the banner; icon links cache-busted so the new logo shows.
@@ -248,11 +249,21 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
 .rules-search{display:flex;flex-wrap:wrap;align-items:center;gap:8px;position:sticky;top:calc(48px + env(safe-area-inset-top,0px));z-index:2;background:var(--surface);padding-block:4px}
 .rules-search input{flex:1 1 240px;min-width:0;font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:10px 16px}
 .rules-search input:focus-visible{outline:2px solid var(--chalk);outline-offset:2px}
-.rules-toc{display:flex;flex-wrap:wrap;gap:6px}
-.rules-toc .chip{font-size:13px;min-height:34px;padding:6px 12px;cursor:pointer;color:var(--ink)}
+.rules-toc{border:1px solid var(--line);border-radius:var(--r);background:var(--bg);padding:4px 12px}
+.rules-toc summary{cursor:pointer;font:800 18px/1 var(--f-display);text-transform:uppercase;letter-spacing:.03em;padding:10px 0;list-style-position:inside}
+.rules-toc summary .small{font:500 12px var(--f-body);text-transform:none;letter-spacing:0;margin-left:6px}
+.toc-list{list-style:none;margin:0;padding:0 0 8px;display:grid;gap:1px;max-height:min(60vh,520px);overflow:auto}
+.toc-list button{all:unset;cursor:pointer;display:flex;gap:8px;padding:7px 6px;border-radius:6px;width:100%;box-sizing:border-box;font-size:14px;line-height:1.35;color:var(--ink)}
+.toc-list button:hover{background:var(--sunk)}
+.toc-list button:focus-visible{outline:2px solid var(--chalk)}
+.toc-list .d1 button{font-weight:600}
+.toc-list .d2 button{padding-left:22px;color:var(--muted)}
+.toc-list .d3 button{padding-left:40px;color:var(--muted);font-size:13px}
+.toc-num{font:600 12px/1.6 var(--f-mono);color:var(--chalk);min-width:2.6em;flex:none}
+.rules .rule-title{margin:0;font:800 24px/1.15 var(--f-display);text-transform:uppercase;letter-spacing:.02em}
+.rules h4.rule-h{font-size:18px;margin-top:8px}
 .rules{max-width:72ch;display:grid;gap:10px;font-size:16px;line-height:1.6;overflow-wrap:break-word;scroll-margin-top:120px}
 .rules p{margin:0}
-.rules .rule-p:first-child{font-weight:600}
 .rules .rule-h{font:800 22px/1.2 var(--f-display);text-transform:uppercase;letter-spacing:.02em;margin:14px 0 2px;scroll-margin-top:120px;display:flex;gap:8px}
 .rules .rule-h:first-child{margin-top:0}
 .rules .rule-num{color:var(--chalk)}
@@ -861,66 +872,143 @@ function lockBar(id, m) {
   return `<div class="lockbar on"><div class="msg"><b><span class="lock-ico" aria-hidden="true"></span>Locked${when ? " " + esc(when) : ""}</b><span class="small muted">Lineup, results and comments are read-only. Unlocking takes two confirmations.</span></div><button class="btn w" data-act="unlock-start">Unlock…</button></div>`;
 }
 
-/* ---------- rules: reflow + search (all in the browser) ---------- */
-// Turns raw rulebook text (often PDF-extracted, with hard line wraps) into structured blocks:
-// section headings (I., II., # Heading), outline items (A., 1., a), bullets) and paragraphs.
+/* ---------- rules: reflow, outline, contents and search (all in the browser) ----------
+   Works with most rulebook layouts: Roman or numbered sections, ARTICLE / SECTION / RULE / CHAPTER
+   headings, decimal numbering (3, 3.1, 3.1.2), A./1./a)/(i) outlines, bullets, ALL-CAPS or
+   Markdown headings, and PDF text with hard line wraps. Nesting depth is learned from the order
+   marker styles first appear, so any scheme nests correctly. */
 const ROMAN = /^(?:M{0,3})(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/;
+const LROMAN = /^(?:x{0,3})(?:ix|iv|v?i{0,3})$/;
 let rulesCache = { text: null, blocks: [] };
+function ruleMarker(l, ctx) {
+  let m;
+  if ((m = l.match(/^(#{1,4})\s+(\S.*)$/))) {
+    const inner = ruleMarker(m[2], ctx);   // "# I. Equipment" keeps its number; "# I. Jump…" after H. is item I.
+    if (inner && (inner.kind === "item" || inner.style === "roman" || inner.style === "top" || inner.style.startsWith("w-"))) return inner;
+    return { kind: "h", style: "md" + m[1].length, label: "", text: m[2] };
+  }
+  if ((m = l.match(/^(article|section|chapter|part|rule|appendix)\s+([ivxlc]+|\d+(?:\.\d+)*[a-z]?|[a-z])\b\s*[.:)\-–—]?\s*(.*)$/i))) {
+    const label = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() + " " + m[2], body = m[3] || "";
+    const t = body.match(/^([A-Z][\w'’ &/-]{0,40}?)\.\s+(?=[A-Z0-9(])/);
+    if (body.split(/\s+/).length > 8 || /[.;:]$/.test(body) || /[.;:]\s/.test(body)) return { kind: "item", style: "w-" + m[1].toLowerCase(), label, text: body, title: t && t[1].split(/\s+/).length <= 4 ? t[1] : null, rest: t && t[1].split(/\s+/).length <= 4 ? body.slice(t[0].length) : null };
+    return { kind: "h", style: "w-" + m[1].toLowerCase(), label, text: body };
+  }
+  if (/^(appendix|glossary|definitions|index|addendum)$/i.test(l)) return { kind: "h", style: "top", label: "", text: l };
+  if ((m = l.match(/^(\d{1,3}(?:\.\d{1,3})+)\.?\s+(\S.*)$/))) return { kind: "item", style: "dec" + m[1].split(".").length, label: m[1], text: m[2] };
+  if ((m = l.match(/^([IVXLC]{1,6})[.)]\s+(\S.*)$/)) && ROMAN.test(m[1])) {
+    const asLetter = m[1].length === 1 && ctx.upper && m[1].charCodeAt(0) === ctx.upper + 1;
+    if (!asLetter) return { kind: "h", style: "roman", label: m[1] + ".", text: m[2] };
+  }
+  if ((m = l.match(/^([A-Z])[.)]\s+(\S.*)$/))) return { kind: "item", style: "upper", label: m[1] + ".", text: m[2], upper: m[1].charCodeAt(0) };
+  if ((m = l.match(/^\(([A-Z])\)\s+(\S.*)$/))) return { kind: "item", style: "pupper", label: "(" + m[1] + ")", text: m[2] };
+  if ((m = l.match(/^(\d{1,3})[.)]\s+(\S.*)$/))) return { kind: "item", style: "digit", label: m[1] + ".", text: m[2] };
+  if ((m = l.match(/^\((\d{1,3})\)\s+(\S.*)$/))) return { kind: "item", style: "pdigit", label: "(" + m[1] + ")", text: m[2] };
+  if ((m = l.match(/^\(?([ivx]{1,4})[.)]\s+(\S.*)$/)) && LROMAN.test(m[1]) && !(m[1].length === 1 && ctx.lower && m[1].charCodeAt(0) === ctx.lower + 1))
+    return { kind: "item", style: "lroman", label: m[1] + ")", text: m[2] };
+  if ((m = l.match(/^([a-z])[.)]\s+(\S.*)$/))) return { kind: "item", style: "lower", label: m[1] + ")", text: m[2], lower: m[1].charCodeAt(0) };
+  if ((m = l.match(/^\(([a-z])\)\s+(\S.*)$/))) return { kind: "item", style: "plower", label: "(" + m[1] + ")", text: m[2], lower: m[1].charCodeAt(0) };
+  if ((m = l.match(/^[-*•●▪◦–]\s+(\S.*)$/))) return { kind: "item", style: "bullet", label: "•", text: m[1] };
+  return null;
+}
+const isCapsHeading = l => l.length <= 80 && /[A-Z]{2}/.test(l) && l === l.toUpperCase() && !/[.;,]$/.test(l) && (l.match(/[A-Z]/g) || []).length >= 3;
+const isTitleLine = l => l.length <= 60 && !/[.;,:!?]$/.test(l) && /^[A-Z0-9]/.test(l) && l.split(/\s+/).length <= 8 &&
+  l.split(/\s+/).filter(w => /^[a-z]/.test(w) && !/^(a|an|and|as|at|by|for|in|of|on|or|the|to|vs\.?|with)$/.test(w)).length === 0;
 function parseRules(text) {
   if (rulesCache.text === text) return rulesCache.blocks;
   const lines = String(text || "").replace(/\r\n?/g, "\n").replace(/\f/g, "\n").split("\n").map(l => l.replace(/[ \t ]+/g, " ").trim());
-  const blocks = []; let cur = null, lastLetter = 0, sec = 0;
-  const marker = l => {
-    let m, hashed = false;
-    if ((m = l.match(/^#{1,4}\s+(.*)$/))) { l = m[1]; hashed = true; }
-    if ((m = l.match(/^([IVXLC]{1,6})\.\s+(\S.*)$/)) && ROMAN.test(m[1])) {
-      const asLetter = m[1].length === 1 && lastLetter && m[1].charCodeAt(0) === lastLetter + 1;
-      if (!asLetter) return { kind: "h", label: m[1] + ".", text: m[2] };
-    }
-    if ((m = l.match(/^([A-Z])\.\s+(\S.*)$/))) return { kind: "item", level: 1, label: m[1] + ".", text: m[2], letter: m[1].charCodeAt(0) };
-    if ((m = l.match(/^(\d{1,2})[.)]\s+(\S.*)$/))) return { kind: "item", level: 2, label: m[1] + ".", text: m[2] };
-    if ((m = l.match(/^\(?([a-z])\)\s+(\S.*)$/))) return { kind: "item", level: 3, label: m[1] + ")", text: m[2] };
-    if ((m = l.match(/^[-*•●▪]\s+(\S.*)$/))) return { kind: "item", level: 3, label: "•", text: m[1] };
-    if (hashed) return { kind: "h", label: "", text: l };
-    return null;
-  };
-  const push = () => { if (cur && cur.text.trim()) blocks.push(cur); cur = null; };
-  let blank = false;
-  for (const raw of lines) {
-    if (!raw) { blank = true; continue; }
-    if (/^\d{1,3}$/.test(raw) || /^page \d+( of \d+)?$/i.test(raw)) continue; // page numbers
-    let mk = marker(raw);
-    // "E. pair's names…" after a sentence that didn't finish is a wrapped line, not a new item
-    if (mk && mk.kind === "item" && mk.level <= 2 && /^[a-z]/.test(mk.text) && cur && !/[.:;!?”")]$/.test(cur.text)) mk = null;
+  const raw = [], ctx = { upper: 0, lower: 0 };
+  let cur = null, blank = true;
+  const push = () => { if (cur && (cur.text.trim() || cur.label)) raw.push(cur); cur = null; };
+  lines.forEach((l, idx) => {
+    if (!l) { blank = true; return; }
+    if (/^\d{1,3}$/.test(l) || /^page \d+( of \d+)?$/i.test(l)) return; // page numbers
+    let mk = ruleMarker(l, ctx);
+    // "E. pair's names…" after an unfinished sentence is a wrapped line, not a new item
+    if (mk && mk.kind === "item" && /^[a-z]/.test(mk.text) && cur && cur.type !== "h" && !/[.:;!?”")]$/.test(cur.text)) mk = null;
+    const nextBlank = !lines[idx + 1];
     if (mk) {
       push();
-      if (mk.kind === "h") { sec++; lastLetter = 0; cur = { type: "h", label: mk.label, text: mk.text, sec }; }
-      else { if (mk.letter) lastLetter = mk.letter; cur = { type: "item", level: mk.level, label: mk.label, text: mk.text, sec }; }
-    } else if (!cur || (blank && cur.type !== "item") || cur.type === "h" && blank) {
-      push(); cur = { type: "p", text: raw, sec };
+      if (mk.upper) { ctx.upper = mk.upper; ctx.lower = 0; } else if (mk.lower) ctx.lower = mk.lower;
+      if (mk.kind === "h") { ctx.upper = 0; ctx.lower = 0; }
+      cur = { type: mk.kind, style: mk.style, label: mk.label, text: mk.text, title: mk.title || null, rest: mk.rest || null };
+      if (mk.kind === "item" && !mk.title && mk.text.split(/\s+/).length <= 7 && !/[.;:,!?]$/.test(mk.text)) cur.pending = true;
+    } else if (blank && (isCapsHeading(l) || (isTitleLine(l) && nextBlank))) {
+      push(); cur = { type: "h", style: isCapsHeading(l) ? "caps" : "title", label: "", text: l }; push();
+    } else if (!cur || (blank && cur.type !== "item") || cur.type === "h") {
+      push(); cur = { type: "p", text: l };
     } else {
-      // continuation of a wrapped line
-      cur.text = /[A-Za-z]-$/.test(cur.text) && /^[a-z]/.test(raw) ? cur.text.slice(0, -1) + raw : cur.text + " " + raw;
+      if (cur.pending && /^[A-Z("“]/.test(l)) { cur.title = cur.text; cur.rest = l; cur.text = cur.text + " – " + l; cur.pending = false; blank = false; return; }
+      cur.pending = false;
+      if (cur.rest != null) cur.rest = /[A-Za-z]-$/.test(cur.rest) && /^[a-z]/.test(l) ? cur.rest.slice(0, -1) + l : cur.rest + " " + l;
+      cur.text = /[A-Za-z]-$/.test(cur.text) && /^[a-z]/.test(l) ? cur.text.slice(0, -1) + l : cur.text + " " + l;
     }
     blank = false;
-  }
+  });
   push();
   // split items that swallowed the next numbered item ("... turn. 2. The 8-ball ...")
-  const out = [];
-  for (const b of blocks) {
-    if (b.type !== "h") {
-      const parts = b.text.split(/(?<=[.:;!?”"])\s+(?=\d{1,2}\.\s+[A-Z])/);
-      if (parts.length > 1) {
-        out.push({ ...b, text: parts[0] });
-        parts.slice(1).forEach(p => { const m = p.match(/^(\d{1,2})\.\s+(.*)$/); out.push({ type: "item", level: 2, label: m[1] + ".", text: m[2], sec: b.sec }); });
-        continue;
-      }
-    }
-    out.push(b);
+  const blocks = [];
+  for (const b of raw) {
+    const parts = b.type === "h" ? [b.text] : b.text.split(/(?<=[.:;!?”"])\s+(?=\d{1,2}\.\s+[A-Z])/);
+    blocks.push({ ...b, text: parts[0] });
+    parts.slice(1).forEach(p => { const m = p.match(/^(\d{1,2})\.\s+(.*)$/); blocks.push({ type: "item", style: "digit", label: m[1] + ".", text: m[2] }); });
   }
-  // headings that are really one long wrapped line of title text stay headings; join "E. pair's" style stray letters
-  out.forEach((b, i) => { b.i = i; b.lower = (b.label ? b.label + " " : "") + b.text.toLowerCase(); });
-  rulesCache = { text, blocks: out };
+  // document title: short unlabelled lines at the top, before the first numbered section or rule
+  const firstLabelled = blocks.findIndex(b => b.label && b.style !== "bullet");
+  const lead = firstLabelled === -1 ? 0 : firstLabelled;
+  const leadOk = lead > 0 && lead <= 4 && blocks.slice(0, lead).every(b => !b.label && b.text.length <= 90 && b.type !== "item");
+  if (leadOk) {
+    blocks[0].type = "title";
+    for (let k = 1; k < lead; k++) blocks[0].text += " · " + blocks[k].text;
+    blocks.splice(1, lead - 1);
+  } else if (blocks[0] && blocks[0].type === "h" && !blocks[0].label && !blocks.slice(1).some(b => b.type === "h" && b.style === blocks[0].style)) {
+    blocks[0].type = "title";
+  }
+  // a style of mostly short, unpunctuated items ("1. GENERAL", "2. FOULS") is really a heading level
+  const styleStats = {};
+  blocks.forEach(b => { if (b.type !== "item") return; const st = styleStats[b.style] ||= { n: 0, short: 0 }; st.n++; const head = b.title || b.text; if ((b.title || (head.split(/\s+/).length <= 7 && !/[.;:,!?]$/.test(head))) && (!b.rest || b.title)) st.short++; });
+  const firstItemStyle = (blocks.find(b => b.type === "item") || {}).style;
+  const headingStyles = new Set(Object.entries(styleStats).filter(([k, v]) => v.n >= 2 && v.short / v.n >= 0.6 && (k === firstItemStyle || /^dec2$/.test(k)) && k !== "bullet").map(([k]) => k));
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.type === "item" && headingStyles.has(b.style) && (b.title || b.text.split(/\s+/).length <= 7)) {
+      b.type = "h"; if (b.style === "dec2" && firstItemStyle !== "dec2") b.sub = true;
+      if (b.title) { const rest = b.rest; b.text = b.title; b.title = null; b.rest = null; if (rest) blocks.splice(i + 1, 0, { type: "p", text: rest }); }
+    }
+  }
+  // levels: headings 1–2 by first appearance of their style; items nest by first appearance within a section
+  const hStack = [], iStack = [];
+  let sec = 0, secTitle = "";
+  blocks.forEach((b, i) => {
+    if (b.type === "h") {
+      let at = b.style === "top" ? 0 : hStack.indexOf(b.style);
+      if (b.sub) at = 1;
+      if (at === -1) { hStack.push(b.style); at = hStack.length - 1; } else if (b.style !== "top") hStack.length = Math.max(at + 1, b.sub ? 2 : at + 1);
+      b.hl = Math.min(at + 1, 2); iStack.length = 0;
+      if (b.hl === 1) { sec++; secTitle = (b.label ? b.label + " " : "") + b.text; }
+      if (!b.text && b.label) { b.text = b.label; b.label = ""; }
+    } else if (b.type === "item") {
+      let at = iStack.indexOf(b.style);
+      if (at === -1) { iStack.push(b.style); at = iStack.length - 1; } else iStack.length = at + 1;
+      b.level = Math.min(at + 1, 4);
+    }
+    // a short lead-in before a dash or colon names the topic ("Breaking – At the start…")
+    if (b.type === "item" && b.level <= 2 && !b.title) {
+      const m = b.text.match(/^([A-Z0-9][^.:;–—]{1,52}?)(?:\s[–—-]\s|:\s|\s?[–—]\s?)(?=\S)/);
+      if (m && m[1].split(/\s+/).length <= 7) { b.title = m[1].trim(); b.rest = b.text.slice(m[0].length); }
+    }
+    b.i = i; b.sec = sec; b.id = "rule-" + i;
+    b.lower = ((b.label ? b.label + " " : "") + b.text).toLowerCase();
+  });
+  rulesCache = { text, blocks };
+  return blocks;
+}
+// Contents: section headings, sub-headings, and titled topics under each section
+function rulesToc() {
+  const out = []; let hd = 0;
+  for (const b of parseRules(S.rules.text)) {
+    if (b.type === "h") { hd = b.hl; out.push({ id: b.id, depth: b.hl, label: b.label, text: b.text }); }
+    else if (b.type === "item" && b.title && b.level === 1) out.push({ id: b.id, depth: hd + 1, label: b.label, text: b.title, topic: true });
+  }
   return out;
 }
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -942,30 +1030,41 @@ function rulesQueryTerms(q) {
 function rulesBody() {
   const blocks = parseRules(S.rules.text), q = S.ui.rulesQ || "", terms = rulesQueryTerms(q);
   const blockHtml = (b, dim) => {
-    if (b.type === "h") return `<h3 id="rule-sec-${b.sec}" class="rule-h${dim ? " ctx" : ""}">${b.label ? `<span class="rule-num">${esc(b.label)}</span> ` : ""}${hl(b.text, terms)}</h3>`;
-    if (b.type === "p") return `<p class="rule-p${dim ? " ctx" : ""}">${hl(b.text, terms)}</p>`;
-    return `<div class="rule lvl${b.level}${dim ? " ctx" : ""}"><span class="rule-lbl">${esc(b.label)}</span><span class="rule-txt">${hl(b.text, terms)}</span></div>`;
+    const c = dim ? " ctx" : "";
+    if (b.type === "h") return `<h${b.hl === 1 ? 3 : 4} id="${b.id}" class="rule-h h${b.hl}${c}">${b.label ? `<span class="rule-num">${esc(b.label)}</span> ` : ""}${hl(b.text, terms)}</h${b.hl === 1 ? 3 : 4}>`;
+    if (b.type === "title") return `<p id="${b.id}" class="rule-title${c}">${hl(b.text, terms)}</p>`;
+    if (b.type === "p") return `<p id="${b.id}" class="rule-p${c}">${hl(b.text, terms)}</p>`;
+    return `<div id="${b.id}" class="rule lvl${b.level}${c}"><span class="rule-lbl">${esc(b.label)}</span><span class="rule-txt">${b.title ? `<b>${hl(b.title, terms)}</b> ${b.rest ? "– " + hl(b.rest, terms) : ""}` : hl(b.text, terms)}</span></div>`;
   };
   if (!terms.length) return blocks.map(b => blockHtml(b, false)).join("");
-  // matching blocks, plus their section heading and parent items for context
   const show = new Map();
   blocks.forEach((b, i) => {
-    if (!terms.every(t => b.lower.includes(t) || b.text.toLowerCase().includes(t))) return;
+    if (!terms.every(t => b.lower.includes(t))) return;
     show.set(i, false);
-    let need = b.type === "item" ? b.level : 99;
+    let need = b.type === "item" ? b.level : b.type === "h" ? b.hl : 99;
     for (let j = i - 1; j >= 0 && need > 0; j--) {
       const p = blocks[j];
-      if (p.type === "h") { if (!show.has(j)) show.set(j, true); break; }
-      if (p.type === "item" && p.level < need) { if (!show.has(j)) show.set(j, true); need = p.level; }
+      if (p.type === "h" && (b.type !== "h" || p.hl < b.hl)) { if (!show.has(j)) show.set(j, true); if (p.hl === 1) break; need = 0; continue; }
+      if (p.type === "item" && b.type === "item" && p.level < need) { if (!show.has(j)) show.set(j, true); need = p.level; }
     }
   });
   const hits = [...show.values()].filter(v => !v).length;
   S.ui.rulesHits = hits;
-  if (!hits) return `<p class="muted" style="margin:0">No rules mention “${esc(q.trim())}”. Try fewer or different words, like <i>sub</i>, <i>forfeit</i> or <i>8-ball</i>.</p>`;
+  if (!hits) return `<p class="muted" style="margin:0">No rules mention “${esc(q.trim())}”. Try fewer or different words.</p>`;
   return [...show.keys()].sort((a, b) => a - b).map(i => blockHtml(blocks[i], show.get(i))).join("");
 }
-function rulesSections() {
-  return parseRules(S.rules.text).filter(b => b.type === "h" && b.label);
+function rulesSummary(text) {
+  const prev = rulesCache; const b = parseRules(text); rulesCache = prev;
+  const secs = b.filter(x => x.type === "h" && x.hl === 1).length, topics = b.filter(x => x.title).length, items = b.filter(x => x.type === "item").length;
+  return { secs, topics, items };
+}
+function viewRulesToc() {
+  const toc = rulesToc(); if (toc.length < 2) return "";
+  const open = S.ui.tocOpen ?? (matchMedia("(min-width: 641px)").matches);
+  return `<details id="rules-toc" class="rules-toc" ${open ? "open" : ""} ${rulesQueryTerms(S.ui.rulesQ).length ? "hidden" : ""}>
+    <summary data-act="toc-toggle">Contents <span class="muted small">${toc.filter(x => x.depth === 1).length || toc.length} sections</span></summary>
+    <ol class="toc-list">${toc.map(t => `<li class="d${Math.min(t.depth, 3)}"><button data-act="rules-jump" data-v="${t.id}">${t.label ? `<span class="toc-num">${esc(t.label)}</span>` : ""}<span>${esc(t.text)}</span></button></li>`).join("")}</ol>
+  </details>`;
 }
 function updateRulesResults() {
   const box = $("#rules-body"); if (!box) return render();
@@ -991,7 +1090,7 @@ function viewRules() {
       <button class="btn ghost small" id="rules-q-clear" data-act="rules-q-clear" ${rulesQueryTerms(S.ui.rulesQ).length ? "" : "hidden"}>Clear</button>
       <span id="rules-count" class="small muted" aria-live="polite">${qn ? `${hits} match${hits === 1 ? "" : "es"}` : ""}</span>
     </div>
-    ${rulesSections().length > 1 ? `<div id="rules-toc" class="rules-toc" role="navigation" aria-label="Rule sections" ${rulesQueryTerms(S.ui.rulesQ).length ? "hidden" : ""}>${rulesSections().map(h => `<button class="chip" data-act="rules-jump" data-v="${h.sec}">${esc(h.label)} ${esc(h.text)}</button>`).join("")}</div>` : ""}
+    ${viewRulesToc()}
     <div class="rules" id="rules-body">${body}</div>
   </section>`
     : `<div class="panel empty"><p>No rules posted yet. Upload the league rulebook below so the whole team can read it here.</p></div>`}
@@ -1001,7 +1100,7 @@ function viewRules() {
     <div class="row"><input type="file" id="rules-file" class="w" accept=".pdf,.docx,.txt,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style="max-width:100%"></div>
     <label class="f">Rules text<textarea id="rules-draft" class="w" data-field="rules-draft" placeholder="Paste the rules here, or pick a file above" style="min-height:200px">${esc(d?.text || "")}</textarea></label>
     <div class="row spread">
-      <span class="small muted">${d?.text ? `${d.text.trim().split(/\s+/).length} words ready${d.fileName ? " from " + esc(d.fileName) : ""}` : ""}</span>
+      <span class="small muted">${d?.text ? (() => { const x = rulesSummary(d.text); return `${d.text.trim().split(/\s+/).length} words${d.fileName ? " from " + esc(d.fileName) : ""} · found ${x.secs} section${x.secs === 1 ? "" : "s"}${x.topics ? `, ${x.topics} topics` : ""}, ${x.items} rules`; })() : ""}</span>
       <div class="row">${d?.text ? `<button class="btn ghost" data-act="rules-clear">Clear</button>` : ""}<button class="btn primary w ${armed ? "armed" : ""}" data-act="rules-post" ${d?.text?.trim() ? "" : "disabled"}>${armed ? "Overwrite current rules?" : r.text ? "Replace rules" : "Post rules"}</button></div>
     </div>
   </section>` : ""}`;
@@ -1576,7 +1675,8 @@ document.addEventListener("click", e => {
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
   if (a === "rules-q-clear") { S.ui.rulesQ = ""; const el = $("#rules-q"); if (el) { el.value = ""; el.focus(); } updateRulesResults(); return; }
-  if (a === "rules-jump") { document.getElementById("rule-sec-" + b.dataset.v)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
+  if (a === "toc-toggle") { e.preventDefault(); const d = $("#rules-toc"); S.ui.tocOpen = !d.open; d.open = S.ui.tocOpen; return; }
+  if (a === "rules-jump") { document.getElementById(b.dataset.v)?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); return; }
   if (a === "sort") {
     const t = b.dataset.t, k = b.dataset.k, cur = (S.ui.sort ||= {})[t];
     S.ui.sort[t] = cur && cur.k === k ? { k, dir: cur.dir === "asc" ? "desc" : "asc" } : { k, dir: k === "name" ? "asc" : "desc" };
