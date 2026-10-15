@@ -90,20 +90,25 @@ Deno.serve(async (req) => {
       method: "POST",
       headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
-        model: MODEL, max_tokens: 700, temperature: 1,
+        model: MODEL, max_tokens: 2000,
         system: SYSTEM,
         messages: [{ role: "user", content: `Facts for tonight's match report:\n${JSON.stringify(facts)}` }],
       }),
     });
     if (!res.ok) {
       const t = await res.text();
-      console.error("anthropic", res.status, t.slice(0, 500));
-      return json({ error: "Claude couldn't write the report right now." }, 502);
+      console.error("anthropic", res.status, t.slice(0, 800));
+      let msg = t.slice(0, 200); try { msg = JSON.parse(t)?.error?.message || msg; } catch { /* plain text */ }
+      return json({ error: `Anthropic API ${res.status}: ${msg}` }, 502);
     }
     const out = await res.json();
     const text = (out.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
-    const raw = text.match(/\{[\s\S]*\}/)?.[0];
-    let ai: any; try { ai = JSON.parse(raw || ""); } catch { return json({ error: "Claude's reply wasn't usable." }, 502); }
+    const clean = text.replace(/```(?:json)?/gi, "");
+    const a = clean.indexOf("{"), b = clean.lastIndexOf("}");
+    let ai: any; try { ai = JSON.parse(clean.slice(a, b + 1)); } catch {
+      console.error("unparsed reply", out.stop_reason, JSON.stringify(out.content).slice(0, 1500));
+      return json({ error: `Claude's reply wasn't readable (stop: ${out.stop_reason}).` }, 502);
+    }
 
     const want = (k: string) => Array.isArray(facts[k]) ? facts[k].length : 0;
     const highs = list(ai.highs, 100), lows = list(ai.lows, 100);
@@ -113,7 +118,7 @@ Deno.serve(async (req) => {
       highs: highs.length === Math.min(2, want("highlights")) ? highs : null,   // null → the app keeps its own lines
       lows: lows.length === Math.min(2, want("lowlights")) ? lows : null,
     };
-    if (!data.headline || !data.summary) return json({ error: "Claude's reply was missing pieces." }, 502);
+    if (!data.headline || !data.summary) { console.error("missing pieces", text.slice(0, 1500)); return json({ error: "Claude's reply was missing the headline or summary." }, 502); }
 
     const rec = { match_id: matchId, team_id: row.team_id, locked_at: m.lockedAt, data, model: MODEL, gen_count: (prev?.gen_count || 0) + 1, updated_at: new Date().toISOString() };
     const { error: we } = await admin.from("match_reports").upsert(rec);
@@ -121,6 +126,6 @@ Deno.serve(async (req) => {
     return json({ report: rec });
   } catch (e) {
     console.error(e);
-    return json({ error: "Something went wrong writing the report." }, 500);
+    return json({ error: `Something went wrong writing the report: ${(e as Error)?.message || e}` }, 500);
   }
 });
