@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v46 2026-10-15: Report write-up failures now show a message with the reason instead of failing silently.
   v45 2026-10-15: Claude writes each locked match's headline, summary, highlights and lowlights (match-report Edge Function, match_reports table). The app's own lines stay as the fallback.
   v44 2026-10-15: Hot hand / Bright spot now scored on wins, big games (clinchers, stay-alive wins, deciders), scratches and win streaks carried over from earlier weeks.
   v43 2026-10-15: Report lowlights always cover scratch trouble: the player with the most scratches, 8-ball scratches, and scratch-heavy games (won or lost).
@@ -1939,8 +1940,8 @@ async function requestReport(id, force) {
     const d = reportData(id, true);
     const { data, error } = await sb.functions.invoke("match-report", { body: { matchId: id, force: !!force, facts: d.facts } });
     if (data?.report) { S.reports[id] = data.report; }
-    if (force && (error || !data?.report)) toast(data?.error || "Claude couldn't rewrite it right now.");
-  } catch (e) { if (force) toast("Claude couldn't rewrite it right now."); }
+    else { let why = data?.error; try { why ||= (await error?.context?.json?.())?.error; } catch (e) {} toast((force ? "Claude couldn't rewrite it: " : "Showing the standard write-up. Claude: ") + (why || error?.message || "no reply")); }
+  } catch (e) { toast("Showing the standard write-up. Claude couldn't be reached."); }
   repPending.delete(id); renderReport();
 }
 function reportCardHtml(d, f = 1) {
