@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v34 2026-10-15: "Draw pairings" renamed "Randomize Lineup".
   v33 2026-10-15: "New match" buttons renamed "Add Match".
   v32 2026-10-15: Header cube removed (logo back in the banner); team name and record now sit above the league · season line.
   v31 2026-10-15: Logo moved from the banner to above the league · season line; team record shown as (W–L) beside the team name.
@@ -763,7 +764,7 @@ function viewMatches(sid) {
     ${cur ? cur.ms.map(currentCard).join("") : `<div class="panel empty"><p>No matches yet this season. Add one with its date and it shows up here.</p><button class="btn primary w" data-act="new-match">Add Match</button></div>`}
   </section>
   <div class="row spread"><h2>Matches</h2><button class="btn primary w" data-act="new-match">Add Match</button></div>
-  ${list.length ? `<div class="mlist">${cards}</div>` : `<div class="panel empty"><p>No matches yet this season. Add one to pick who's playing and draw the pairings.</p></div>`}`;
+  ${list.length ? `<div class="mlist">${cards}</div>` : `<div class="panel empty"><p>No matches yet this season. Add one to pick who's playing and randomize the lineup.</p></div>`}`;
 }
 
 function viewMatch(id) {
@@ -839,7 +840,7 @@ function viewMatch(id) {
 
   <section class="panel">
     <div class="row spread"><h3>Lineup · ${GAMES} games of doubles</h3>
-      ${LD ? "" : `<div class="row"><button class="btn w ${armedShuffle ? "armed" : ""}" data-act="shuffle" ${roster.length < 4 || roster.length > MAX_ROSTER || m.forfeit ? "disabled" : ""}>${armedShuffle ? "Replace current lineup?" : anyResults ? "Re-draw pairings" : "Draw pairings"}</button>
+      ${LD ? "" : `<div class="row"><button class="btn w ${armedShuffle ? "armed" : ""}" data-act="shuffle" ${roster.length < 4 || roster.length > MAX_ROSTER || m.forfeit ? "disabled" : ""}>${armedShuffle ? "Replace current lineup?" : anyResults ? "Re-randomize Lineup" : "Randomize Lineup"}</button>
         <button class="btn primary w" data-act="lineup-final" ${m.forfeit ? "disabled" : ""}>Finalize lineup</button></div>`}</div>
     ${lineupBar(id, m)}
     <div class="notes">
@@ -1781,7 +1782,7 @@ document.addEventListener("click", e => {
     if (filled && !arm("shuffle-" + S.view.matchId)) return;
     S.ui.armed = null;
     const games = randomLineup(m); if (!games) { toast(m.roster?.length < 4 ? "Need at least 4 players present to build a lineup." : "Couldn't find a lineup that fits the rules. Check who's present."); render(); return; }
-    editMatch(x => { x.games = games; }); toast("Pairings drawn"); return;
+    editMatch(x => { x.games = games; }); toast("Lineup randomized"); return;
   }
   if (a === "copy-roster") {
     const from = S.seasons[b.dataset.from]; if (!from) return;
