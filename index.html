@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v56 2026-10-16: Optional match start time (next to the date); shown on the card and list, orders doubleheaders, carried to new matches.
   v55 2026-10-16: Claude picks report highlights/lowlights from scoresheet lines and all notes (relevant, paraphrased); heavy-scratch line stays required.
   v54 2026-10-16: Match notes work like game notes: several per match, optional name and tag each, seen in the notes window; locked matches show Show Match Notes.
   v53 2026-10-16: Optional name on game notes and the match comment, remembered on the device; shown with the note and passed to Claude.
@@ -160,10 +161,10 @@ h3{font:600 15px var(--f-body);margin:0}
 .small{font-size:13px}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:14px;min-width:0}
 label.f{display:grid;gap:4px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.02em}
-input[type=text],input[type=date],select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
-input[type=date]{display:block;box-sizing:border-box;max-width:100%;-webkit-appearance:none;appearance:none;line-height:1.25;min-height:0}
-input[type=date]::-webkit-date-and-time-value{text-align:left;margin:0}
-input[type=date]::-webkit-datetime-edit{padding:0}
+input[type=text],input[type=date],input[type=time],select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;width:100%}
+input[type=date],input[type=time]{display:block;box-sizing:border-box;max-width:100%;-webkit-appearance:none;appearance:none;line-height:1.25;min-height:0}
+input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and-time-value{text-align:left;margin:0}
+input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit{padding:0}
 textarea{min-height:120px;resize:vertical}
 input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--chalk);outline-offset:2px}
 .btn{font:600 14px var(--f-body);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:8px 14px;cursor:pointer;white-space:nowrap}
@@ -222,6 +223,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .legend{font-size:12px;color:var(--muted)}
 .tools{display:flex;gap:4px}
 .has-note{color:var(--chalk)}
+.dt-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 .note-btn{position:relative}
 .note-count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--chalk);color:#fff;font:700 11px var(--f-body);margin-left:4px}
 .note-btn .note-count{position:absolute;top:-4px;right:-6px;margin:0}
@@ -347,8 +349,8 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
   nav button.push{margin-left:0}
   main{padding-block:16px calc(96px + env(safe-area-inset-bottom,0px));gap:16px}
   .toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))}
-  input[type=text],input[type=email],input[type=password],input[type=date],select,textarea{font-size:16px;padding:10px 12px}
-  input[type=date]{height:46px;padding-block:0}
+  input[type=text],input[type=email],input[type=password],input[type=date],input[type=time],select,textarea{font-size:16px;padding:10px 12px}
+  input[type=date],input[type=time]{height:46px;padding-block:0}
   .btn{min-height:44px}
   .btn.small,.btn.ghost.small{min-height:40px}
   .icon{width:44px;height:44px;font-size:17px}
@@ -430,10 +432,13 @@ function pName(seasonId, id, m) {
   const sub = (m?.subs || []).find(x => x.id === id);
   return sub ? sub.name + " (sub)" : (m?.names?.[id] || "Former player");
 }
+// match start time ("19:30"), optional; orders matches on the same day (doubleheaders)
+const fmtTime = t => { if (!/^\d{2}:\d{2}$/.test(t || "")) return ""; const d = new Date(`2000-01-01T${t}`); return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); };
+const byStart = (a, b) => (a.time || "99:99").localeCompare(b.time || "99:99") || (a.created || 0) - (b.created || 0);
 const seasonMatches = sid => Object.entries(S.matches).map(([id, m]) => ({ id, ...m })).filter(m => m.seasonId === sid)
-  .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0));
+  .sort((a, b) => (b.date || "").localeCompare(a.date || "") || byStart(b, a));
 function matchNo(m) {
-  const same = Object.entries(S.matches).filter(([, x]) => x.seasonId === m.seasonId && x.date === m.date).sort((a, b) => (a[1].created || 0) - (b[1].created || 0));
+  const same = Object.entries(S.matches).filter(([, x]) => x.seasonId === m.seasonId && x.date === m.date).sort((a, b) => byStart(a[1], b[1]));
   return { n: same.findIndex(([id]) => id === (m.id || S.view.matchId)) + 1, of: same.length };
 }
 function score(m) {
@@ -816,8 +821,8 @@ function viewNoSeason() {
 }
 
 function currentMatches(list) {
-  const today = todayISO(), byCreated = (a, b) => (a.created || 0) - (b.created || 0);
-  const on = d => list.filter(m => m.date === d).sort(byCreated);
+  const today = todayISO();
+  const on = d => list.filter(m => m.date === d).sort(byStart);
   const many = n => n > 1 ? "es" : "";
   if (on(today).length) return { title: `Today's Match${many(on(today).length)}`, ms: on(today) };
   const next = list.filter(m => m.date > today).map(m => m.date).sort()[0];
@@ -839,7 +844,7 @@ function currentCard(m) {
   }).join("");
   return `<div class="cur">
     <div class="cur-head">
-      <div style="min-width:0"><div class="eyebrow">${esc(full)}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
+      <div style="min-width:0"><div class="eyebrow">${esc(full)}${fmtTime(m.time) ? " · " + fmtTime(m.time) : ""}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
         <h2>vs ${esc(m.opponent || "Opponent TBD")}</h2>
         <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : m.lineupFinal ? ' · <span class="tag">Lineup final</span>' : ""}</div></div>
       <div class="score"><b>${m.forfeit ? "FF" : sc.w + "–" + sc.l}</b>${sc.res ? `<span class="res ${sc.res}">${resLabel(sc.res)}</span>` : ""}</div>
@@ -858,7 +863,7 @@ function viewMatches(sid) {
     return `<div class="mrow"><button class="mcard" data-act="open" data-id="${m.id}">
       <div class="mdate">${mon}<b>${day}</b></div>
       <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
-        <div class="small muted">${esc(rest)}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${matchNotes(m).length ? " · has notes" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
+        <div class="small muted">${esc(rest)}${fmtTime(m.time) ? " · " + fmtTime(m.time) : ""}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${matchNotes(m).length ? " · has notes" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
       <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span></span>
     </button>${m.locked ? `<button class="btn scr-btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Match Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
   }).join("");
@@ -925,7 +930,8 @@ function viewMatch(id) {
       <div class="score"><b>${sc.w}–${sc.l}</b><span class="res ${sc.res}">${sc.res ? "Match " + resLabel(sc.res).toLowerCase() + (m.forfeit ? " by forfeit" : m.games.every(g => g.result) ? "" : " · clinched, play all 5 if time allows") : "In progress"}</span></div>
     </div>
     <div class="grid2">
-      <label class="f">Match date<input type="date" id="m-date" class="w" data-field="date" value="${esc(m.date)}"></label>
+      <div class="dt-row"><label class="f">Match date<input type="date" id="m-date" class="w" data-field="date" value="${esc(m.date)}"></label>
+        <label class="f">Start time<input type="time" id="m-time" class="w" data-field="time" step="300" value="${esc(m.time || "")}"></label></div>
       <label class="f">Opposing team<input type="text" id="m-opp" class="w" data-field="opponent" placeholder="Team name" value="${esc(m.opponent)}"></label>
       <label class="f">Match type<select id="m-type" class="w" data-act="mtype"><option value="">Regular season</option><option value="playoff" ${m.playoff ? "selected" : ""}>Playoff</option></select></label>
       ${m.playoff ? `<label class="f">Playoff round<input type="text" id="m-round" class="w" data-field="poRound" list="po-rounds" placeholder="e.g. Quarterfinal" value="${esc(m.poRound || "")}"><datalist id="po-rounds"><option value="Round 1"></option><option value="Quarterfinal"></option><option value="Semifinal"></option><option value="Final"></option></datalist></label>
@@ -2037,7 +2043,7 @@ function reportData(id, raw) {
   ];
   const facts = {
     storylines: story, comments: comments.length ? comments : undefined,
-    lockedAt: m.lockedAt || null, team, opponent: opp, date: m.date || "", city: (S.league?.city || "").trim() || undefined, league: S.league?.name || "", season: S.seasons[sid]?.name || "",
+    lockedAt: m.lockedAt || null, team, opponent: opp, date: m.date || "", startTime: fmtTime(m.time) || undefined, city: (S.league?.city || "").trim() || undefined, league: S.league?.name || "", season: S.seasons[sid]?.name || "",
     score: { us: sc.w, them: sc.l }, result: { W: "win", L: "loss", T: "tie" }[sc.res] || "unfinished",
     forfeit: m.forfeit ? (m.forfeit === "them" ? "opponent forfeited" : "we forfeited") : null,
     playoff: po ? { round, format: fmt === "double" ? "double elimination" : "single elimination", bracket: fmt === "double" ? bracket : null, outcome: tag, next: m.poNext || null } : null,
@@ -2290,7 +2296,8 @@ document.addEventListener("click", e => {
   }
   if (a === "new-match") {
     const id = uid(), sid = curSeasonId();
-    S.matches[id] = { seasonId: sid, date: todayISO(), opponent: "", roster: [], games: Array.from({ length: GAMES }, blankGame), comment: "", names: {}, created: Date.now() };
+    const lastTime = seasonMatches(sid).find(x => x.time)?.time;
+    S.matches[id] = { seasonId: sid, date: todayISO(), ...(lastTime ? { time: lastTime } : {}), opponent: "", roster: [], games: Array.from({ length: GAMES }, blankGame), comment: "", names: {}, created: Date.now() };
     persist("matches", id); S.view.matchId = id; render(); window.scrollTo(0, 0); return;
   }
   if (a === "del-match") { if (!isAdmin()) return; if (S.matches[S.view.matchId]?.locked) return; if (!arm("del-" + S.view.matchId)) return; const id = S.view.matchId; delete S.matches[id]; persist("matches", id); S.view.matchId = null; S.ui.armed = null; render(); toast("Match deleted"); return; }
@@ -2335,6 +2342,7 @@ document.addEventListener("change", e => {
   if (t.dataset.act === "poFormat") { editMatch(m => { m.poFormat = t.value; if (t.value !== "double") delete m.poBracket; }); return; }
   if (t.dataset.act === "poBracket") { editMatch(m => { m.poBracket = t.value; }); return; }
   if (t.dataset.field === "date") { editMatch(m => { m.date = t.value; }); return; }
+  if (t.dataset.field === "time") { editMatch(m => { if (t.value) m.time = t.value; else delete m.time; }); return; }
 });
 
 document.addEventListener("input", e => {
