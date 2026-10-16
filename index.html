@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v57 2026-10-16: League schedule import (Excel/CSV) with preview, duplicate-safe team matching and Claude fallback; imported teams locked until their default PIN 0000 is changed; league venue and match table fields.
   v56 2026-10-16: Optional match start time (next to the date); shown on the card and list, orders doubleheaders, carried to new matches.
   v55 2026-10-16: Claude picks report highlights/lowlights from scoresheet lines and all notes (relevant, paraphrased); heavy-scratch line stays required.
   v54 2026-10-16: Match notes work like game notes: several per match, optional name and tag each, seen in the notes window; locked matches show Show Match Notes.
@@ -223,6 +224,17 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .legend{font-size:12px;color:var(--muted)}
 .tools{display:flex;gap:4px}
 .has-note{color:var(--chalk)}
+.imp-box{display:grid;gap:12px;border-top:1px solid var(--line);padding-top:14px;margin-top:4px}
+.file-btn{justify-self:start;cursor:pointer}
+.imp-teams{display:grid;gap:6px;max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px}
+.imp-team{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,220px);gap:10px;align-items:center;padding:8px;border-radius:8px}
+.imp-team.check{background:#fbf1cf}
+.imp-team select{font-size:14px}
+.imp-sum{display:grid;gap:6px;font-size:14px}
+.warnc{color:#8a5a00}
+.pin-gate{border:2px solid #e2c25a;background:#fbf1cf}
+.pin-locked input,.pin-locked select,.pin-locked textarea,.pin-locked .w{pointer-events:none;opacity:.55}
+@media (max-width:560px){.imp-team{grid-template-columns:1fr}}
 .dt-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 .note-btn{position:relative}
 .note-count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--chalk);color:#fff;font:700 11px var(--f-body);margin-left:4px}
@@ -649,7 +661,8 @@ async function loadSeasons() {
 async function loadTeam(teamId) {
   if (chan) { sb.removeChannel(chan); chan = null; }
   if (repChan) { sb.removeChannel(repChan); repChan = null; }
-  S.teamId = teamId; S.seasons = {}; S.matches = {}; S.reports = {}; S.view.matchId = null;
+  S.teamId = teamId; S.seasons = {}; S.matches = {}; S.reports = {}; S.view.matchId = null; S.pinDefault = false;
+  sb.rpc("team_pin_is_default", { p_team: teamId }).then(({ data }) => { if (S.teamId === teamId && data === true) { S.pinDefault = true; render(); } });
   S.loaded = { team: false, seasons: false, matches: false, rules: false }; render();
   const t = await sb.from("teams").select("id,name,league_id").eq("id", teamId).maybeSingle();
   if (!t.data) return signOut(S.role === "member" ? "Your team session ended. Enter the PIN again." : "That team isn't available.");
@@ -808,7 +821,10 @@ function render() {
     <nav style="--n:${tabs.length}">${tabs.map(([k, l]) => `<button data-act="tab" data-v="${k}" aria-current="${S.view.tab === k}"${k === "rules" ? ' class="push"' : ""}>${l}</button>`).join("")}</nav>
   </header>
   <main>
+    ${S.pinDefault && S.teamId && S.view.tab !== "league" && S.view.tab !== "rules" ? viewPinGate() : ""}
+    <div class="${S.pinDefault && S.teamId && S.view.tab !== "league" && S.view.tab !== "rules" ? "pin-locked" : ""}" style="display:contents">
     ${S.view.tab === "league" ? viewLeague() : S.view.tab === "rules" ? viewRules() : !S.teamId ? `<div class="panel empty"><p>Create a league and its first team on the League tab.</p></div>` : S.view.tab === "admin" ? viewAdmin() : S.view.tab === "rules" ? viewRules() : !s ? viewNoSeason() : S.view.tab === "standings" ? viewStandings(sid) : S.view.matchId && S.matches[S.view.matchId] ? viewMatch(S.view.matchId) : viewMatches(sid)}
+    </div>
   </main>`;
   renderLayer();
   if (keep) { const el = document.getElementById(keep.id); if (el) { if (keep.text) { el.value = keep.val; try { el.setSelectionRange(keep.s, keep.e); } catch (e) {} } el.focus({ preventScroll: true }); } }
@@ -844,7 +860,7 @@ function currentCard(m) {
   }).join("");
   return `<div class="cur">
     <div class="cur-head">
-      <div style="min-width:0"><div class="eyebrow">${esc(full)}${fmtTime(m.time) ? " · " + fmtTime(m.time) : ""}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
+      <div style="min-width:0"><div class="eyebrow">${esc(full)}${fmtTime(m.time) ? " · " + fmtTime(m.time) : ""}${m.table ? " · " + esc(m.table) : ""}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
         <h2>vs ${esc(m.opponent || "Opponent TBD")}</h2>
         <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : m.lineupFinal ? ' · <span class="tag">Lineup final</span>' : ""}</div></div>
       <div class="score"><b>${m.forfeit ? "FF" : sc.w + "–" + sc.l}</b>${sc.res ? `<span class="res ${sc.res}">${resLabel(sc.res)}</span>` : ""}</div>
@@ -863,7 +879,7 @@ function viewMatches(sid) {
     return `<div class="mrow"><button class="mcard" data-act="open" data-id="${m.id}">
       <div class="mdate">${mon}<b>${day}</b></div>
       <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
-        <div class="small muted">${esc(rest)}${fmtTime(m.time) ? " · " + fmtTime(m.time) : ""}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${matchNotes(m).length ? " · has notes" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
+        <div class="small muted">${esc(rest)}${fmtTime(m.time) ? " · " + fmtTime(m.time) : ""}${m.table ? " · " + esc(m.table) : ""}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${matchNotes(m).length ? " · has notes" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
       <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span></span>
     </button>${m.locked ? `<button class="btn scr-btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Match Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
   }).join("");
@@ -932,6 +948,7 @@ function viewMatch(id) {
     <div class="grid2">
       <div class="dt-row"><label class="f">Match date<input type="date" id="m-date" class="w" data-field="date" value="${esc(m.date)}"></label>
         <label class="f">Start time<input type="time" id="m-time" class="w" data-field="time" step="300" value="${esc(m.time || "")}"></label></div>
+      <label class="f">Table<input type="text" id="m-table" class="w" data-field="table" maxlength="30" placeholder="e.g. Table 2" value="${esc(m.table || "")}"></label>
       <label class="f">Opposing team<input type="text" id="m-opp" class="w" data-field="opponent" placeholder="Team name" value="${esc(m.opponent)}"></label>
       <label class="f">Match type<select id="m-type" class="w" data-act="mtype"><option value="">Regular season</option><option value="playoff" ${m.playoff ? "selected" : ""}>Playoff</option></select></label>
       ${m.playoff ? `<label class="f">Playoff round<input type="text" id="m-round" class="w" data-field="poRound" list="po-rounds" placeholder="e.g. Quarterfinal" value="${esc(m.poRound || "")}"><datalist id="po-rounds"><option value="Round 1"></option><option value="Quarterfinal"></option><option value="Semifinal"></option><option value="Final"></option></datalist></label>
@@ -1457,6 +1474,103 @@ function viewTeamPin() {
     <div class="prow"><input type="password" id="new-pin" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New PIN"><button class="btn w ${armed ? "armed danger" : ""}" data-act="pin-set">${armed ? "Change PIN and sign everyone out?" : "Change PIN"}</button></div>
   </section>`;
 }
+function viewImport(d, season) {
+  const imp = S.mgr.imp;
+  const intro = `<div class="imp-box"><h3>Import schedule</h3><p class="small muted" style="margin:0">Upload the league schedule (Excel or CSV) to add its teams and matches to ${esc(season.name)}. You'll see a preview first. Existing teams and matches are never overwritten; only missing details like an opponent or start time get filled in.</p>
+    <label class="btn w file-btn">Choose schedule file<input type="file" id="imp-file" accept=".xlsx,.xls,.csv,.ods" hidden></label></div>`;
+  if (!imp || imp.leagueId !== S.mgr.leagueId || imp.seasonId !== S.mgr.seasonId) return intro;
+  if (imp.busy) return `<div class="imp-box"><h3>Import schedule</h3><p class="rp-writing" style="margin:0">${imp.busy === "claude" ? "Claude is reading" : "Reading"} ${esc(imp.fileName)}…</p></div>`;
+  if (imp.error) return `<div class="imp-box"><h3>Import schedule</h3><div class="notes"><div class="e">${esc(imp.error)}</div></div><div class="row">${imp.sheets && imp.via !== "claude" ? `<button class="btn w" data-act="imp-claude">Have Claude read it</button>` : ""}<button class="btn ghost" data-act="imp-cancel">Cancel</button></div></div>`;
+  const plan = schPlan(imp, d.teams), real = imp.games.filter(g => !g.homeSlot && !g.awaySlot);
+  const dates = [...new Set(real.map(g => g.date))].sort(), pdates = [...new Set(plan.skippedSlots.map(g => g.date))].sort();
+  const fmt = iso => { const x = new Date(iso + "T12:00"); return isNaN(x) ? iso : x.toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
+  const nNew = imp.clusters.filter(c => c.choice === "new").length, locked = plan.fills.filter(f => f.locked).length;
+  const nFill = plan.fills.length - locked;
+  const order = imp.clusters.slice().sort((a, b) => (b.sugg && !b.sugg.sure ? 2 : b.sugg ? 1 : 0) - (a.sugg && !a.sugg.sure ? 2 : a.sugg ? 1 : 0) || a.name.localeCompare(b.name));
+  const opts = c => `<option value="new" ${c.choice === "new" ? "selected" : ""}>New team (PIN 0000)</option>` + d.teams.slice().sort((a, b) => (b.id === c.sugg?.id) - (a.id === c.sugg?.id) || a.name.localeCompare(b.name)).map(t => `<option value="${t.id}" ${c.choice === t.id ? "selected" : ""}>Same as ${esc(t.name)}</option>`).join("");
+  return `<div class="imp-box">
+    <div class="row spread"><h3 style="margin:0">Schedule preview</h3><span class="small muted">${esc(imp.fileName)}${imp.via === "claude" ? " · read by Claude" : ""}</span></div>
+    <p style="margin:0">${imp.clusters.length} teams · ${dates.length} week${dates.length === 1 ? "" : "s"} (${fmt(dates[0])} – ${fmt(dates[dates.length - 1])}) · ${real.length} matches${pdates.length ? ` · ${pdates.map(fmt).join(" and ")} playoff${pdates.length > 1 ? "s" : ""} not imported (teams decided later)` : ""}</p>
+    ${"venue" in d.league ? (d.league.venue ? `<p class="small muted" style="margin:0">League venue stays “${esc(d.league.venue)}”.</p>` : `<label class="f">Venue<input type="text" id="imp-venue" maxlength="200" value="${esc(imp.venue || "")}" placeholder="Where matches are played"></label>`) : ""}
+    <div class="imp-teams">${order.map(c => `<div class="imp-team ${c.sugg && !c.sugg.sure ? "check" : ""}">
+      <div style="min-width:0"><b>${esc(c.name)}</b> <span class="small muted">${c.count} match${c.count === 1 ? "" : "es"}</span>
+        ${c.variants.length > 1 ? `<div class="small muted">Also written: ${c.variants.slice(1).map(esc).join(", ")}</div>` : ""}
+        ${c.sugg ? `<div class="small ${c.sugg.sure ? "muted" : "warnc"}">${c.sugg.sure ? "Matches" : "Looks like"} ${esc(c.sugg.name)} (${esc(c.sugg.why)})${c.sugg.sure ? "" : " · check this"}</div>` : ""}</div>
+      <select data-act="imp-choice" data-key="${c.key}" aria-label="What to do with ${esc(c.name)}">${opts(c)}</select></div>`).join("")}</div>
+    <div class="imp-sum">
+      <div><b>${nNew}</b> new team${nNew === 1 ? "" : "s"} (PIN 0000, locked until a new PIN is set) · <b>${imp.clusters.length - nNew}</b> existing</div>
+      <div><b>${plan.creates.length}</b> match${plan.creates.length === 1 ? "" : "es"} to add · <b>${nFill}</b> existing match${nFill === 1 ? "" : "es"} get missing details${locked ? ` · ${locked} locked, left as is` : ""}</div>
+      ${plan.conflicts.length ? `<details><summary class="warnc">${plan.conflicts.length} conflict${plan.conflicts.length === 1 ? "" : "s"} left as is</summary>${plan.conflicts.map(x => `<div class="small">${esc(x.team)} · ${fmt(x.date)}: has “${esc(x.have)}”, schedule says “${esc(x.want)}”</div>`).join("")}</details>` : ""}
+    </div>
+    <div class="row spread"><span class="row"><button class="btn ghost" data-act="imp-cancel">Cancel</button>${imp.via !== "claude" ? `<button class="btn ghost w" data-act="imp-claude" title="If teams or dates look wrong">Have Claude read it</button>` : ""}</span>
+      <button class="btn primary w" data-act="imp-run" ${imp.running ? "disabled" : ""}>${imp.running ? "Importing…" : "Import"}</button></div>
+  </div>`;
+}
+async function importRead(file) {
+  S.mgr.imp = { leagueId: S.mgr.leagueId, seasonId: S.mgr.seasonId, fileName: file.name, busy: true }; render();
+  const imp = S.mgr.imp;
+  try {
+    if (file.size > 5e6) throw new Error("That file is over 5 MB. Export just the schedule and try again.");
+    if (!window.XLSX) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+    const wb = window.XLSX.read(await file.arrayBuffer(), { type: "array" });
+    imp.sheets = schSheets(wb);
+    const r = schParse(imp.sheets, file.name);
+    if (!r.games.some(g => !g.homeSlot && !g.awaySlot)) return importClaude();
+    await importPrepare(r, "reader");
+  } catch (e) { if (S.mgr.imp === imp) { imp.busy = false; imp.error = e.message || "Couldn't read that file."; render(); } }
+}
+async function importClaude() {
+  const imp = S.mgr.imp; if (!imp?.sheets) return;
+  imp.busy = "claude"; imp.error = null; render();
+  const { data, error } = await sb.functions.invoke("match-report", { body: { action: "schedule", league: imp.leagueId, fileName: imp.fileName, text: schText(imp.sheets) } });
+  if (S.mgr.imp !== imp) return;
+  let why = data?.error; try { why ||= (await error?.context?.json?.())?.error; } catch (e) {}
+  if (!data?.schedule) { imp.busy = false; imp.via = "claude"; imp.error = "Claude couldn't read the schedule" + (why ? `: ${why}` : "."); return render(); }
+  const sc = data.schedule;
+  const games = schMarkSlots((sc.games || []).map(g => ({ date: g.date, week: g.week || "", playoff: !!g.playoff, time: g.time ? schHM(g.time) : null, home: String(g.home || "").trim(), away: String(g.away || "").trim(), table: g.table || null, round: g.round || null })));
+  if (!games.some(g => !g.homeSlot && !g.awaySlot)) { imp.busy = false; imp.via = "claude"; imp.error = "No matches were found in that file."; return render(); }
+  await importPrepare({ year: sc.year, games, venue: sc.venue || "" }, "claude");
+}
+async function importPrepare(r, via) {
+  const imp = S.mgr.imp;
+  Object.assign(imp, { year: r.year, games: r.games, venue: r.venue || "", via, error: null });
+  imp.clusters = schClusters(imp.games);
+  const teams = S.mgr.data?.teams || [];
+  schSuggest(imp.clusters, teams);
+  imp.existing = {};
+  const ids = teams.map(t => t.id);
+  if (ids.length) { const { data } = await sb.from("matches").select("id,team_id,data").in("team_id", ids); (data || []).filter(x => x.data?.seasonId === imp.seasonId).forEach(x => (imp.existing[x.team_id] ||= []).push(x)); }
+  imp.busy = false; render();
+}
+async function importRun() {
+  const imp = S.mgr.imp, d = S.mgr.data; if (!imp || imp.running || !d) return;
+  const picked = imp.clusters.filter(c => c.choice !== "new").map(c => c.choice);
+  const dup = picked.find((id, i) => picked.indexOf(id) !== i);
+  if (dup) return toast(`Two schedule teams are set to “${d.teams.find(t => t.id === dup)?.name}”. Pick one, or make the other a new team.`);
+  const plan = schPlan(imp, d.teams);
+  const creates = plan.creates.map((x, i) => ({ id: uid(), team_key: x.team.key, data: {
+    date: x.g.date, ...(x.g.time ? { time: x.g.time } : {}), opponent: x.g.opp, ...(x.g.table ? { table: x.g.table } : {}),
+    roster: [], games: Array.from({ length: GAMES }, blankGame), comment: "", names: {}, created: Date.now() + i, imported: imp.fileName,
+    ...(x.g.playoff ? { playoff: true, ...(x.g.round ? { poRound: x.g.round } : {}) } : {}) } }));
+  const fills = plan.fills.filter(f => !f.locked).map(f => ({ id: f.id, team_key: f.team.key, set: f.set }));
+  const teamsP = imp.clusters.map(c => ({ key: c.key, name: c.name, existing_id: c.choice === "new" ? null : c.choice, aliases: c.variants }));
+  imp.running = true; render();
+  const { data, error } = await sb.rpc("import_schedule", { p_league: imp.leagueId, p_season: imp.seasonId, p_venue: ($("#imp-venue")?.value ?? imp.venue ?? "").trim(), p_teams: teamsP, p_creates: creates, p_fills: fills });
+  imp.running = false;
+  if (error) { toast(errMsg(error)); return render(); }
+  S.mgr.imp = null;
+  toast(`Imported: ${data.teams_created} new team${data.teams_created === 1 ? "" : "s"}, ${data.matches_created} match${data.matches_created === 1 ? "" : "es"} added, ${data.matches_filled} filled in.`);
+  await loadAdminTeams();
+  S.mgr.data = null; await loadMgr(imp.leagueId);
+  if (S.teamId && Object.values(data.team_ids || {}).includes(S.teamId)) await loadTeam(S.teamId);
+  render();
+}
+function viewPinGate() {
+  return `<section class="panel pin-gate"><h3>Set a team PIN to get started</h3>
+    <p class="small" style="margin:0">This team was added from the league schedule with the temporary PIN 0000. Until a new PIN is set, nobody can add a roster or change matches.</p>
+    ${isAdmin() ? `<div class="prow"><input type="password" id="first-pin" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New PIN"><button class="btn primary" data-act="pin-first">Set PIN</button></div>` : `<p class="small muted" style="margin:0">Ask your team or league admin to set it.</p>`}
+  </section>`;
+}
 function viewAccount() {
   return `<section class="panel">
     <h3>Your account <span class="muted small">${esc(S.username)}</span></h3>
@@ -1469,16 +1583,17 @@ async function loadMgr(leagueId) {
   if (!leagueId) { S.mgr.data = { seasons: [], teams: [], st: [], league: null }; return render(); }
   if (S.mgr.loading === leagueId) return; S.mgr.loading = leagueId;
   const [lg, ls, tm] = await Promise.all([
-    sb.from("leagues").select("id,name,current_season_id,city").eq("id", leagueId).maybeSingle().then(r => r.error ? sb.from("leagues").select("id,name,current_season_id").eq("id", leagueId).maybeSingle() : r),
+    sb.from("leagues").select("*").eq("id", leagueId).maybeSingle(),
     sb.from("league_seasons").select("id,name,created_at").eq("league_id", leagueId).order("created_at"),
-    sb.from("teams").select("id,name,created_at").eq("league_id", leagueId).order("name"),
+    sb.from("teams").select("*").eq("league_id", leagueId).order("name"),
   ]);
   const ids = (ls.data || []).map(s => s.id);
   const st = ids.length ? (await sb.from("season_teams").select("season_id,team_id").in("season_id", ids)).data || [] : [];
   const { data: pins } = await sb.rpc("list_signin_teams", { p_league: leagueId });
   S.mgr.loading = null;
   if (S.mgr.leagueId !== leagueId) return;
-  S.mgr.data = { league: lg.data, seasons: ls.data || [], teams: tm.data || [], st, nopin: new Set() };
+  const dp = await sb.rpc("league_default_pins", { p_league: leagueId });
+  S.mgr.data = { league: lg.data, seasons: ls.data || [], teams: tm.data || [], st, nopin: new Set(), defaultPins: new Set(dp.error ? [] : (dp.data || []).map(x => typeof x === "string" ? x : Object.values(x)[0])) };
   (pins || []).forEach(p => { if (!p.has_pin) S.mgr.data.nopin.add(p.id); });
   if (!S.mgr.seasonId || !ids.includes(S.mgr.seasonId)) S.mgr.seasonId = lg.data?.current_season_id || ids[ids.length - 1] || null;
   render();
@@ -1503,7 +1618,7 @@ function viewLeague() {
   const seasonTeams = ready ? d.teams.filter(t => inS.has(t.id)) : [], others = ready ? d.teams.filter(t => !inS.has(t.id)) : [];
   const teamRow = (t, inSeason) => { const a = S.ui.armed === "team-del-" + t.id, ra = S.ui.armed === "team-out-" + t.id, pinOpen = S.ui.pinFor === t.id; return `
       <div class="lrow">
-        <div style="min-width:0"><b>${esc(t.name)}</b>${t.id === S.teamId ? ` <span class="tag">Open now</span>` : ""}${inSeason && d.nopin.has(t.id) ? ` <span class="tag" style="color:var(--warn)">No PIN</span>` : ""}</div>
+        <div style="min-width:0"><b>${esc(t.name)}</b>${t.id === S.teamId ? ` <span class="tag">Open now</span>` : ""}${inSeason && d.nopin.has(t.id) ? ` <span class="tag" style="color:var(--warn)">No PIN</span>` : ""}${d.defaultPins?.has(t.id) ? ` <span class="tag" style="color:var(--warn)" title="Imported with PIN 0000. Locked until a new PIN is set.">Default PIN</span>` : ""}</div>
         <div class="row">
           ${t.id === S.teamId ? "" : `<button class="btn small" data-act="team-open" data-id="${t.id}">Open</button>`}
           ${inSeason ? `<button class="btn small w" data-act="team-pin-open" data-id="${t.id}">Set PIN</button>
@@ -1526,6 +1641,7 @@ function viewLeague() {
   <section class="panel">
     <label class="f">League name<input type="text" id="lg-name-${lid}" class="w" data-field="league-name" value="${esc(d.league.name)}"></label>
     ${"city" in d.league ? `<label class="f">City<input type="text" id="lg-city-${lid}" class="w" data-field="league-city" maxlength="80" placeholder="e.g. Philadelphia, PA" value="${esc(d.league.city || "")}"><span class="small muted">Gives match reports local color and match-day weather.</span></label>` : ""}
+    ${"venue" in d.league ? `<label class="f">Venue<input type="text" id="lg-venue-${lid}" class="w" data-field="league-venue" maxlength="200" placeholder="e.g. 254 S. 12th St." value="${esc(d.league.venue || "")}"><span class="small muted">Where matches are played.</span></label>` : ""}
   </section>
 
   <section class="panel">
@@ -1556,6 +1672,7 @@ function viewLeague() {
       <label class="f">Team PIN<input type="password" id="nt-pin" class="pin w" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="4 digits"></label>
     </div>
     <div><button class="btn primary w" data-act="team-create">Add new team to ${esc(season.name)}</button></div>` : ""}
+    ${season ? viewImport(d, season) : ""}
     ${others.length ? `<h3 style="margin-top:6px">Other teams in this league <span class="muted small">not in ${esc(season?.name || "this season")}</span></h3>${others.map(t => teamRow(t, false)).join("")}` : ""}
   </section>
 
@@ -1682,7 +1799,7 @@ async function leagueAction(a, b) {
   if (a === "team-pin-save") {
     const pin = $("#tp-" + id).value.trim(); if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return true; }
     const { error } = await sb.rpc("set_team_pin", { p_team: id, p_pin: pin });
-    if (say(error, "PIN saved. Players on that team need the new PIN.")) { S.ui.pinFor = null; await refreshAdminData(lid); }
+    if (say(error, "PIN saved. Players on that team need the new PIN.")) { S.ui.pinFor = null; if (id === S.teamId) S.pinDefault = false; await refreshAdminData(lid); }
     return true;
   }
   if (a === "team-create") {
@@ -1809,6 +1926,18 @@ async function changeAdminRole(sel) {
 }
 let leagueNameTimer = null;
 let leagueCityTimer = null;
+let leagueVenueTimer = null;
+function saveLeagueVenue(v) {
+  clearTimeout(leagueVenueTimer);
+  const lid = S.mgr.leagueId;
+  leagueVenueTimer = setTimeout(async () => {
+    const venue = v.trim().slice(0, 200);
+    const { error } = await sb.from("leagues").update({ venue }).eq("id", lid);
+    if (error) return toast(errMsg(error));
+    if (S.mgr.data?.league?.id === lid) S.mgr.data.league.venue = venue;
+    if (S.league && S.leagueId === lid) S.league.venue = venue;
+  }, 600);
+}
 function saveLeagueCity(v) {
   clearTimeout(leagueCityTimer);
   const lid = S.mgr.leagueId;
@@ -2043,7 +2172,7 @@ function reportData(id, raw) {
   ];
   const facts = {
     storylines: story, comments: comments.length ? comments : undefined,
-    lockedAt: m.lockedAt || null, team, opponent: opp, date: m.date || "", startTime: fmtTime(m.time) || undefined, city: (S.league?.city || "").trim() || undefined, league: S.league?.name || "", season: S.seasons[sid]?.name || "",
+    lockedAt: m.lockedAt || null, team, opponent: opp, date: m.date || "", startTime: fmtTime(m.time) || undefined, table: m.table || undefined, city: (S.league?.city || "").trim() || undefined, league: S.league?.name || "", season: S.seasons[sid]?.name || "",
     score: { us: sc.w, them: sc.l }, result: { W: "win", L: "loss", T: "tie" }[sc.res] || "unfinished",
     forfeit: m.forfeit ? (m.forfeit === "them" ? "opponent forfeited" : "we forfeited") : null,
     playoff: po ? { round, format: fmt === "double" ? "double elimination" : "single elimination", bracket: fmt === "double" ? bracket : null, outcome: tag, next: m.poNext || null } : null,
@@ -2162,7 +2291,216 @@ async function saveReportImage() {
 }
 window.addEventListener("resize", () => { if (S.ui?.report) renderReport(); });
 
+/* ---------- schedule import (league admins) ----------
+   Reads a league schedule from Excel/CSV, works out the teams (merging spelling variants), and plans what
+   to add without overwriting anything: new teams (PIN 0000, locked until a real PIN is set), new matches,
+   and empty fields filled on existing matches. Unknown layouts can be read by Claude instead. */
+const SCH_MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+const SCH_VS = /^(vs\.?|v\.?|versus|@|at)$/i;
+const schIsTime = v => typeof v === "string" && /^\s*\d{1,2}:\d{2}(:\d{2})?(\s*[ap]\.?m\.?)?\s*$/i.test(v);
+const schHM = v => { const m = String(v).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([ap])?/i); if (!m) return null; let h = +m[1]; if (m[3]) { if (/p/i.test(m[3]) && h < 12) h += 12; if (/a/i.test(m[3]) && h === 12) h = 0; } return String(h).padStart(2, "0") + ":" + m[2]; };
+const SCH_SLOT = /^([A-Z]\d{1,2}(\s*\/\s*[A-Z]\d{1,2})?(\s+(winner|loser))?|tbd|tba|bye|open|.*\b(winner|loser|semi ?-?finals?|seminal|finals?|championship|seed|quarter ?-?finals?)\b.*)$/i;
+function schFindDate(text, year) {
+  const s = String(text);
+  let m = s.match(/\b(\d{4})-(\d{2})-(\d{2})\b/); if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(st|nd|rd|th)?(,?\s+(\d{4}))?/i);
+  if (m) return `${m[5] || year}-${String(SCH_MONTHS[m[1].toLowerCase()]).padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  m = s.match(/\b(\d{1,2})\/(\d{1,2})(\/(\d{2,4}))?\b/);
+  if (m && +m[1] <= 12 && +m[2] <= 31) return `${m[4] ? (m[4].length === 2 ? "20" + m[4] : m[4]) : year}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return null;
+}
+// workbook → [{ name, rows: [[cell…]…] }] with times as "HH:MM" and dates as "YYYY-MM-DD"
+function schSheets(wb) {
+  const X = window.XLSX;
+  return wb.SheetNames.map(name => {
+    const ws = wb.Sheets[name], ref = ws["!ref"]; if (!ref) return { name, rows: [] };
+    const r = X.utils.decode_range(ref), rows = [];
+    for (let R = r.s.r; R <= Math.min(r.e.r, 600); R++) {
+      const row = [];
+      for (let C = 0; C <= Math.min(r.e.c, 40); C++) {
+        const cell = ws[X.utils.encode_cell({ r: R, c: C })]; let v = null;
+        if (cell) {
+          if (cell.t === "n" && cell.z && X.SSF.is_date(cell.z)) {
+            const p = X.SSF.parse_date_code(cell.v), hm = `${String(p.H).padStart(2, "0")}:${String(p.M).padStart(2, "0")}`;
+            v = cell.v < 1 ? hm : `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}${p.H || p.M ? " " + hm : ""}`;
+          } else v = cell.v;
+        }
+        row.push(v);
+      }
+      while (row.length && row[row.length - 1] == null) row.pop();
+      rows.push(row);
+    }
+    while (rows.length && !rows[rows.length - 1].length) rows.pop();
+    return { name, rows };
+  });
+}
+function schYear(sheets, fileName) {
+  const text = [fileName, ...sheets.flatMap(s => s.rows.flat().filter(v => typeof v === "string"))].join(" ");
+  const ys = (text.match(/\b20\d{2}\b/g) || []).map(Number);
+  if (!ys.length) return new Date().getFullYear();
+  const n = y => ys.filter(x => x === y).length;
+  return ys.sort((a, b) => n(b) - n(a))[0];
+}
+function schVenue(sheets) {
+  for (const s of sheets) for (const row of s.rows.slice(0, 8)) for (const v of row) {
+    if (typeof v !== "string") continue;
+    const m = v.match(/(?:played at|venue|location)\s*:?\s*([^\n]+)/i); if (m) return m[1].trim().replace(/[.;]$/, "");
+  }
+  return "";
+}
+// "Team vs Team" layouts with date headers above, times to the left and tables to the right
+function schParse(sheets, fileName) {
+  const year = schYear(sheets, fileName), games = [];
+  for (const sh of sheets) {
+    const R = sh.rows, cell = (r, c) => (R[r] || [])[c];
+    const heads = [];
+    R.forEach((row, r) => row.forEach((v, c) => {
+      if (v == null) return;
+      const s = String(v);
+      if (schIsTime(s)) return;
+      const d = /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : typeof v === "string" ? schFindDate(s, year) : null;
+      if (d) heads.push({ r, c, d, playoff: /playoff|post ?season/i.test(s), label: s.trim() });
+    }));
+    R.forEach((row, r) => row.forEach((v, c) => {
+      if (typeof v !== "string" || !SCH_VS.test(v.trim())) return;
+      const home = cell(r, c - 1), away = cell(r, c + 1);
+      if (typeof home !== "string" && typeof away !== "string") return;
+      const h = heads.filter(x => x.r < r && Math.abs(x.c - c) <= 3).sort((a, b) => b.r - a.r || Math.abs(a.c - c) - Math.abs(b.c - c))[0]
+        || heads.filter(x => x.r === r && x.c < c).sort((a, b) => b.c - a.c)[0];
+      const t = [cell(r, c - 2), cell(r, c - 3)].find(schIsTime);
+      const tb = [cell(r, c + 2), cell(r, c + 3)].find(x => typeof x === "string" && /table|court|board|lane/i.test(x));
+      const note = [cell(r, c + 2), cell(r, c + 3), cell(r, c + 4)].find(x => typeof x === "string" && /semi|final|champ|quarter|playoff/i.test(x));
+      games.push({ date: h?.d || null, week: h?.label || "", playoff: !!h?.playoff || !!note, time: t ? schHM(t) : null,
+        home: String(home ?? "").trim(), away: String(away ?? "").trim(), table: tb ? tb.trim() : null, round: note ? note.trim() : null });
+    }));
+  }
+  if (!games.length) games.push(...schParseColumns(sheets, year));
+  return { year, games: schMarkSlots(games), venue: schVenue(sheets) };
+}
+// one match per row under a header like: Date | Time | Home | Away | Table
+function schParseColumns(sheets, year) {
+  const out = [];
+  for (const sh of sheets) {
+    const R = sh.rows;
+    for (let h = 0; h < Math.min(R.length, 30); h++) {
+      const hdr = (R[h] || []).map(v => String(v ?? "").trim().toLowerCase());
+      const find = re => hdr.findIndex(x => re.test(x));
+      const cD = find(/^(date|day|match date|game date)$/), cT = find(/^(time|start|start time)$/), cTb = find(/^(table|court|board|location)$/), cW = find(/^(week|wk|round)$/);
+      let cA = find(/^(home|home team|team 1|team a|team)$/), cB = find(/^(away|away team|visitor|visitors|team 2|team b|opponent)$/);
+      if (cD < 0 || cA < 0 || cB < 0 || cA === cB) continue;
+      for (let r = h + 1; r < R.length; r++) {
+        const row = R[r] || [], dv = row[cD]; if (dv == null || dv === "") continue;
+        const d = /^\d{4}-\d{2}-\d{2}/.test(String(dv)) ? String(dv).slice(0, 10) : schFindDate(String(dv), year);
+        if (!d || row[cA] == null || row[cB] == null) continue;
+        const tv = cT >= 0 ? row[cT] : (String(dv).match(/\d{1,2}:\d{2}(\s*[ap]m)?/i) || [])[0];
+        out.push({ date: d, week: cW >= 0 ? String(row[cW] ?? "") : "", playoff: /playoff|semi|final/i.test(String(cW >= 0 ? row[cW] : "")), time: tv && schIsTime(String(tv)) ? schHM(String(tv)) : null,
+          home: String(row[cA]).trim(), away: String(row[cB]).trim(), table: cTb >= 0 && row[cTb] != null ? String(row[cTb]).trim() : null, round: null });
+      }
+      if (out.length) return out;
+    }
+  }
+  return out;
+}
+const schMarkSlots = games => games.filter(g => g.date).map(g => ({ ...g, homeSlot: !g.home || SCH_SLOT.test(g.home), awaySlot: !g.away || SCH_SLOT.test(g.away) }));
+// compact text of the workbook for Claude
+function schText(sheets) {
+  const out = [];
+  for (const s of sheets) {
+    out.push(`### Sheet: ${s.name}`);
+    s.rows.forEach((row, r) => { const cells = row.map((v, c) => v == null ? null : `${String.fromCharCode(65 + (c % 26))}${r + 1}=${String(v).replace(/\s+/g, " ")}`).filter(Boolean); if (cells.length) out.push(cells.join(" | ")); });
+  }
+  return out.join("\n").slice(0, 60000);
+}
+
+// ---- names: spelling-insensitive keys and similarity ----
+const SCH_STOP = new Set(["the", "team", "and", "a", "of", "club"]);
+const SCH_NUM = { to: "2", too: "2", two: "2", four: "4", for: "4", eight: "8", one: "1", won: "1" };
+const schTokens = name => String(name).normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
+  .replace(/&/g, " and ").replace(/\bw\//g, "with ").replace(/['’]/g, "").replace(/[^a-z0-9]+/g, " ").trim().split(" ")
+  .filter(Boolean).map(t => SCH_NUM[t] || t).filter(t => !SCH_STOP.has(t));
+function schLev(a, b) { const m = a.length, n = b.length; let p = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) { const q = [i]; for (let j = 1; j <= n; j++) q[j] = Math.min(p[j] + 1, q[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); p = q; } return p[n]; }
+function schSim(a, b) {
+  const A = schTokens(a), B = schTokens(b), ka = A.join(""), kb = B.join("");
+  if (!ka || !kb) return { score: 0, why: "" };
+  if (ka === kb) return { score: 1, why: "same name apart from case, spacing or punctuation" };
+  const ratio = 1 - schLev(ka, kb) / Math.max(ka.length, kb.length);
+  const sa = new Set(A), sb = new Set(B), inter = [...sa].filter(t => sb.has(t)).length, jac = inter / new Set([...A, ...B]).size;
+  let score = Math.max(ratio, jac), why = ratio >= jac ? `spelled ${Math.round(ratio * 100)}% alike` : `${Math.round(jac * 100)}% of words shared`;
+  if (inter >= 2 && (inter === sa.size || inter === sb.size)) { score = Math.max(score, 0.8); why = "one name contains the other"; }
+  return { score, why };
+}
+const schBest = (name, team) => [team.name, ...(team.aliases || [])].map(n => schSim(name, n)).sort((x, y) => y.score - x.score)[0];
+// group the file's names into teams: same key merges; near-misses merge only if they never play the same week
+function schClusters(games) {
+  const seen = new Map();
+  for (const g of games) for (const [n, slot] of [[g.home, g.homeSlot], [g.away, g.awaySlot]]) {
+    if (slot) continue; const e = seen.get(n) || { count: 0, weeks: new Set() }; e.count++; e.weeks.add(g.date); seen.set(n, e);
+  }
+  const out = [];
+  for (const [n, e] of [...seen].sort((a, b) => b[1].count - a[1].count)) {
+    let best = null;
+    for (const c of out) {
+      const s = schSim(n, c.name), overlap = [...e.weeks].some(w => c.weeks.has(w));
+      if (s.score === 1 || (s.score >= 0.88 && !overlap)) if (!best || s.score > best.s.score) best = { c, s };
+    }
+    if (best) { best.c.variants.push(n); e.weeks.forEach(w => best.c.weeks.add(w)); best.c.count += e.count; }
+    else out.push({ key: "k" + out.length, name: n, variants: [n], weeks: new Set(e.weeks), count: e.count });
+  }
+  // display the most-used spelling; on a tie, the one with proper capitals
+  const caps = x => (x.match(/[A-Z]/g) || []).length;
+  out.forEach(c => { c.variants.sort((a, b) => seen.get(b).count - seen.get(a).count || caps(b) - caps(a)); c.name = c.variants[0]; });
+  return out;
+}
+// suggest links to the league's existing teams; each existing team is claimed by at most one file team
+function schSuggest(clusters, teams) {
+  const cand = [];
+  clusters.forEach(c => teams.forEach(t => { const s = c.variants.map(v => schBest(v, t)).sort((x, y) => y.score - x.score)[0]; if (s.score >= 0.8) cand.push({ c, t, s }); }));
+  cand.sort((x, y) => y.s.score - x.s.score);
+  const taken = new Set(), done = new Set();
+  clusters.forEach(c => { c.choice = "new"; c.sugg = null; });
+  for (const x of cand) {
+    if (taken.has(x.t.id) || done.has(x.c.key)) continue;
+    taken.add(x.t.id); done.add(x.c.key);
+    x.c.choice = x.t.id; x.c.sugg = { id: x.t.id, name: x.t.name, why: x.s.why, sure: x.s.score === 1 };
+  }
+}
+// what the import will do, given the admin's choices
+function schPlan(imp, teams) {
+  const byKey = Object.fromEntries(imp.clusters.map(c => [c.key, c]));
+  const clusterOf = name => imp.clusters.find(c => c.variants.includes(name));
+  const tname = id => teams.find(t => t.id === id)?.name;
+  const display = c => c.choice === "new" ? c.name : tname(c.choice) || c.name;
+  const creates = [], fills = [], conflicts = [], skippedSlots = imp.games.filter(g => g.homeSlot || g.awaySlot);
+  const real = imp.games.filter(g => !g.homeSlot && !g.awaySlot);
+  for (const c of imp.clusters) {
+    const mine = real.filter(g => c.variants.includes(g.home) || c.variants.includes(g.away))
+      .map(g => { const oc = clusterOf(c.variants.includes(g.home) ? g.away : g.home); return { ...g, opp: oc ? display(oc) : (c.variants.includes(g.home) ? g.away : g.home), oppTeam: oc }; })
+      .sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
+    const existing = c.choice === "new" ? [] : (imp.existing[c.choice] || []);
+    const used = new Set();
+    for (const g of mine) {
+      const sameDay = existing.filter(x => x.data.date === g.date && !used.has(x.id))
+        .sort((a, b) => schSim(b.data.opponent || "", g.opp).score - schSim(a.data.opponent || "", g.opp).score || (a.data.time || "").localeCompare(b.data.time || ""));
+      const hit = sameDay[0];
+      if (!hit) { creates.push({ team: c, g }); continue; }
+      used.add(hit.id);
+      const d = hit.data, have = (d.opponent || "").trim();
+      const oppOk = !have || schSim(have, g.opp).score >= 0.8 || (g.oppTeam && g.oppTeam.variants.some(v => schSim(have, v).score >= 0.8));
+      if (!oppOk) { conflicts.push({ team: display(c), date: g.date, have, want: g.opp }); continue; }
+      const set = {};
+      if (!have) set.opponent = g.opp;
+      if (!d.time && g.time) set.time = g.time;
+      if (!d.table && g.table) set.table = g.table;
+      if (Object.keys(set).length) fills.push({ team: c, id: hit.id, set, locked: !!d.locked, date: g.date });
+    }
+  }
+  return { creates, fills, conflicts, skippedSlots, byKey, display };
+}
+
 /* ---------- actions ---------- */
+// what still works on a team that's locked until its default PIN is changed
+const PIN_SAFE = new Set(["tab", "open", "back", "report-open", "report-close", "report-save", "notes-view", "close-modal", "sign-out", "pin-first", "team-open"]);
 function editLineup(fn) { const m = S.matches[S.view.matchId]; if (m?.lineupFinal && !m.locked) { toast("The lineup is final. Tap Edit… in the Lineup section to change it."); render(); return; } editMatch(fn); }
 function editMatch(fn) { const id = S.view.matchId, m = S.matches[id]; if (!m) return; if (m.locked) { toast("This match is locked. Unlock it to make changes."); render(); return; } fn(m); persist("matches", id); render(); }
 function editSeason(id, fn) { const s = S.seasons[id]; if (!s) return; fn(s); persist("seasons", id); render(); }
@@ -2172,6 +2510,17 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b || b.tagName === "SELECT" || b.type === "checkbox") return;
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
+  if (S.pinDefault && S.teamId && S.view.tab !== "league" && !PIN_SAFE.has(a)) { toast("Set a new team PIN first."); return; }
+  if (a === "pin-first") {
+    const pin = ($("#first-pin")?.value || "").trim();
+    if (!/^\d{4}$/.test(pin) || pin === "0000") { toast("Choose a 4-digit PIN other than 0000."); return; }
+    const tid = S.teamId;
+    sb.rpc("set_team_pin", { p_team: tid, p_pin: pin }).then(({ error }) => { if (error) return toast(errMsg(error)); if (S.teamId === tid) S.pinDefault = false; S.mgr.data?.defaultPins?.delete(tid); toast("PIN set. Share it with your team."); render(); });
+    return;
+  }
+  if (a === "imp-cancel") { S.mgr.imp = null; render(); return; }
+  if (a === "imp-claude") { importClaude(); return; }
+  if (a === "imp-run") { importRun(); return; }
   if (a === "report-open") { S.ui.report = b.dataset.id; renderReport(); if (S.canWrite) requestReport(b.dataset.id); return; }
   if (a === "report-rewrite") { if (S.ui.report && isAdmin()) requestReport(S.ui.report, true); return; }
   if (a === "report-close") { S.ui.report = null; renderReport(); return; }
@@ -2190,7 +2539,7 @@ document.addEventListener("click", e => {
     const pin = $("#new-pin").value.trim(); if (!/^\d{4}$/.test(pin)) { toast("The PIN must be exactly 4 digits."); return; }
     if (S.ui.armed !== "pin-set") { arm("pin-set"); setTimeout(() => { const el = $("#new-pin"); if (el) el.value = pin; }, 0); return; }
     S.ui.armed = null;
-    sb.rpc("set_team_pin", { p_team: S.teamId, p_pin: pin }).then(({ error }) => { toast(error ? errMsg(error) : "PIN changed. Share the new PIN with your team."); render(); });
+    sb.rpc("set_team_pin", { p_team: S.teamId, p_pin: pin }).then(({ error }) => { if (!error) { S.pinDefault = false; S.mgr.data?.defaultPins?.delete(S.teamId); } toast(error ? errMsg(error) : "PIN changed. Share the new PIN with your team."); render(); });
     return;
   }
   if (a === "scratch") { const m = S.matches[b.dataset.m]; if (!m || m.locked) return; S.ui.modal = { kind: "scratch", matchId: b.dataset.m, game: defaultGame(m), player: "", type: "" }; renderLayer(); return; }
@@ -2334,6 +2683,10 @@ document.addEventListener("change", e => {
   if (t.id === "gate-team") { S.gate.teamId = t.value; return; }
   if (t.id === "gate-league") { S.gate.leagueId = t.value; S.gate.teamId = ""; try { localStorage.setItem("ss-last-league", t.value); } catch (x) {} refreshGateTeams().then(render); return; }
   if (t.id === "mgr-league") { S.mgr.leagueId = t.value; S.mgr.seasonId = null; S.mgr.data = null; render(); return; }
+  if (t.id === "imp-file" && t.files?.[0]) { importRead(t.files[0]); t.value = ""; return; }
+  if (t.dataset.act === "imp-choice") { const c = S.mgr.imp?.clusters?.find(x => x.key === t.dataset.key); if (c) { c.choice = t.value; render(); } return; }
+  if (S.pinDefault && S.teamId && S.view.tab !== "league" && t.id !== "first-pin" && (t.dataset.field || t.dataset.act)) { toast("Set a new team PIN first."); render(); return; }
+  if (t.dataset.field === "table") { editMatch(m => { const v = t.value.trim().slice(0, 30); if (v) m.table = v; else delete m.table; }); return; }
   if (!S.canWrite) return;
   if (t.dataset.act === "player") { editLineup(m => { m.games[+t.dataset.g].p[+t.dataset.s] = t.value; m.names ||= {}; if (t.value) m.names[t.value] = pName(m.seasonId, t.value, m); }); return; }
   if (t.dataset.act === "roster") { editLineup(m => { const id = t.dataset.id; m.roster = t.checked ? [...new Set([...(m.roster || []), id])] : (m.roster || []).filter(x => x !== id); }); return; }
@@ -2349,6 +2702,9 @@ document.addEventListener("input", e => {
   const t = e.target, f = t.dataset.field; if (!f || !S.canWrite) return;
   if (f === "league-name") { saveLeagueName(t.value); return; }
   if (f === "league-city") { saveLeagueCity(t.value); return; }
+  if (f === "league-venue") { saveLeagueVenue(t.value); return; }
+  if (S.pinDefault && S.teamId && S.view.tab !== "league") return;
+  if (f === "table") return;   // saved on change
   if (f === "rules-q") { S.ui.rulesQ = t.value; clearTimeout(window._rq); window._rq = setTimeout(updateRulesResults, 120); return; }
   if (f === "rules-draft") { S.ui.draft = { text: t.value, fileName: S.ui.draft?.fileName || "" }; const btn = $('[data-act="rules-post"]'); if (btn) btn.disabled = !t.value.trim(); return; }
   if ((f === "opponent" || f === "opp") && S.matches[S.view.matchId]?.locked) return;

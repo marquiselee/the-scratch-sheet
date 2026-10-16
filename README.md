@@ -47,7 +47,12 @@ Admins can tap **Forgot password?** on the sign-in screen to get a reset link by
 - `supabase/migrations/003_leagues_and_seasons.sql` adds leagues and league seasons, keeping all existing teams, rosters, matches and admins (they move into one league called "My League").
 - `supabase/migrations/004_final_lineup.sql` enforces finalized lineups (and auto-finalizes on match lock).
 - `supabase/migrations/005_match_reports.sql` adds the table for Claude-written match reports.
+- `supabase/migrations/007_schedule_import.sql` adds schedule import (League tab), default-PIN locking for imported teams, team aliases and the league venue.
 - `supabase/migrations/006_league_city.sql` adds a league city (League tab), used for local color and match-day weather in reports.
+
+## Importing a league schedule
+
+On the League tab, a league admin can upload the league schedule (Excel or CSV) for the selected season. The app reads "Team vs Team" grids with date headers, or one-match-per-row sheets with Date/Home/Away columns; anything else is read by Claude through the same `match-report` function. A preview shows the teams (spelling variants merged, likely matches to existing teams flagged for a check), matches to add, details to fill in and conflicts. Nothing existing is overwritten: only empty opponent, time and table fields are filled, locked matches are skipped, and existing teams keep their names (the schedule's spelling is remembered as an alias). New teams get PIN 0000 and can't change rosters or matches until a team or league admin sets a new PIN.
 
 ## Claude-written match reports
 

@@ -146,6 +146,40 @@ async function placeAndWeather(city: string, date: string) {
   } catch { return null; }
 }
 
+// ---------- league schedule reading (fallback for layouts the app can't parse itself) ----------
+const SCHEDULE_PROMPT = `You read recreational pool league schedules exported from spreadsheets and return every scheduled match as JSON.
+The input lists each non-empty cell as COLUMNROW=value, one spreadsheet row per line, sheet by sheet.
+Reply with one JSON object and nothing else:
+{"year": number, "venue": string|null, "games": [{"date": "YYYY-MM-DD", "time": "HH:MM" (24-hour) or null, "home": string, "away": string, "table": string or null, "week": string or null, "playoff": boolean, "round": string or null}]}
+Rules:
+- One entry per scheduled match. Never invent matches, teams, dates or times.
+- Copy team names exactly as written in the schedule (keep their spelling and punctuation).
+- Playoff matchups that use seeds or placeholders (A1, C5/C4 winner, "A Semifinal", TBD) are kept as written, with playoff true.
+- Infer the year from titles or file name; dates without a year use that year.
+- venue is where matches are played, if the sheet says so.
+- Ignore standings grids, brackets drawings and notes that aren't scheduled matches.`;
+
+async function readSchedule(body: any, uid: string, KEY: string, url: string, service: string) {
+  const admin = createClient(url, service, { auth: { persistSession: false } });
+  const { data: who } = await admin.from("admins").select("role,league_id").eq("user_id", uid).maybeSingle();
+  if (!(who?.role === "owner" || (who?.role === "league" && who.league_id === body.league))) return json({ error: "Only an admin of this league can import its schedule." }, 403);
+  const text = String(body.text || "").slice(0, 60000);
+  if (!text.trim()) return json({ error: "The file looks empty." }, 400);
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: MODEL, max_tokens: 16000, system: SCHEDULE_PROMPT,
+      messages: [{ role: "user", content: `File name: ${str(body.fileName, 200)}\nToday: ${new Date().toISOString().slice(0, 10)}\n\n${text}\n\nReply with the JSON object only.` }] }),
+  });
+  if (!res.ok) { const t = await res.text(); console.error("anthropic schedule", res.status, t.slice(0, 500)); return json({ error: `Anthropic API ${res.status}` }, 502); }
+  const out = await res.json();
+  const txt = (out.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("").replace(/```(?:json)?/gi, "");
+  let sc: any; try { sc = JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1)); } catch { return json({ error: `the reply wasn't readable (stop: ${out.stop_reason})` }, 502); }
+  const games = (Array.isArray(sc.games) ? sc.games : []).filter((g: any) => /^\d{4}-\d{2}-\d{2}$/.test(g?.date || "") && (g.home || g.away)).slice(0, 2000)
+    .map((g: any) => ({ date: g.date, time: /^\d{1,2}:\d{2}$/.test(g.time || "") ? g.time : null, home: str(g.home, 80), away: str(g.away, 80), table: g.table ? str(g.table, 30) : null, week: g.week ? str(g.week, 60) : null, playoff: !!g.playoff, round: g.round ? str(g.round, 40) : null }));
+  return json({ schedule: { year: Number(sc.year) || null, venue: sc.venue ? str(sc.venue, 200) : "", games } });
+}
+
 function count(games: any[]) {
   let w = 0, l = 0;
   for (const g of games || []) { if (g?.result === "W") w++; else if (g?.result === "L" || g?.result === "FF") l++; }
@@ -173,6 +207,7 @@ Deno.serve(async (req) => {
     if (ue || !u?.user) return json({ error: "Your session ended. Sign in again." }, 401);
 
     const body = await req.json().catch(() => ({}));
+    if (body.action === "schedule") return await readSchedule(body, u.user.id, KEY, url, service);
     const matchId = String(body.matchId || ""), force = !!body.force, facts = body.facts || {};
     if (!/^[A-Za-z0-9_-]{4,64}$/.test(matchId)) return json({ error: "Bad match id." }, 400);
     const { data: row } = await asUser.from("matches").select("id,team_id,data").eq("id", matchId).maybeSingle();
