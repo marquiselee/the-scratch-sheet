@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v58 2026-10-16: Matches list rows expand in place to show the same details as the Next Match card.
   v57 2026-10-16: League schedule import (Excel/CSV) with preview, duplicate-safe team matching and Claude fallback; imported teams locked until their default PIN 0000 is changed; league venue and match table fields.
   v56 2026-10-16: Optional match start time (next to the date); shown on the card and list, orders doubleheaders, carried to new matches.
   v55 2026-10-16: Claude picks report highlights/lowlights from scoresheet lines and all notes (relevant, paraphrased); heavy-scratch line stays required.
@@ -186,6 +187,12 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .mcard{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;cursor:pointer;text-align:left;font:inherit;color:inherit;width:100%}
 .mcard:hover{border-color:var(--cloth)}
 .mrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}
+.mitem{display:grid;gap:6px}
+.mitem.open .mcard{border-color:var(--cloth)}
+.mexp .cur{border-style:dashed}
+.cur-compact{padding:12px 14px;gap:12px}
+.chev{display:inline-block;width:9px;height:9px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);margin:0 2px 3px 8px;transition:transform .15s}
+.mitem.open .chev{transform:rotate(-135deg);margin-bottom:-3px}
 .scr-btn{border-radius:var(--r)}
 @media (max-width:480px){
   .mrow{gap:6px}
@@ -847,7 +854,7 @@ function currentMatches(list) {
   if (last) return { title: `Last Match${many(on(last).length)}`, ms: on(last) };
   return null;
 }
-function currentCard(m) {
+function currentCard(m, compact) {
   const sc = score(m), no = matchNo(m), n = (m.roster || []).length;
   const d = new Date((m.date || "") + "T12:00"), full = isNaN(d) ? "Date not set" : d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
   const games = m.games.map((g, i) => {
@@ -858,17 +865,17 @@ function currentCard(m) {
       <div class="who">${who || `<span class="muted">${g.result === "FF" ? "Forfeited" : "Not set"}</span>`}${opp ? `<div class="opp">vs ${opp}</div>` : ""}</div>
       ${r ? `<span class="pill ${tag}">${r === "FF" ? "Forfeit" : r === "NP" ? "Not played" : r}</span>` : `<span class="small muted">—</span>`}</div>`;
   }).join("");
-  return `<div class="cur">
-    <div class="cur-head">
+  return `<div class="cur${compact ? " cur-compact" : ""}">
+    ${compact ? `<div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.playoff ? " · Playoff" : ""}${m.lineupFinal && !m.locked ? " · Lineup final" : ""}</div>` : `<div class="cur-head">
       <div style="min-width:0"><div class="eyebrow">${esc(full)}${fmtTime(m.time) ? " · " + fmtTime(m.time) : ""}${m.table ? " · " + esc(m.table) : ""}${no.of > 1 ? ` · Doubleheader match ${no.n} of ${no.of}` : ""}${m.playoff ? " · Playoff" : ""}</div>
         <h2>vs ${esc(m.opponent || "Opponent TBD")}</h2>
         <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : m.lineupFinal ? ' · <span class="tag">Lineup final</span>' : ""}</div></div>
       <div class="score"><b>${m.forfeit ? "FF" : sc.w + "–" + sc.l}</b>${sc.res ? `<span class="res ${sc.res}">${resLabel(sc.res)}</span>` : ""}</div>
-    </div>
+    </div>`}
     <div class="cur-games">${games}</div>
     ${(m.scratches || []).length ? `<div class="cur-scr">${m.scratches.slice().reverse().map(x => `<span class="scr">${m.locked ? "" : `<button class="scr-edit w" data-act="edit-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Edit scratch">`}G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)}${m.locked ? "" : ` <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Remove scratch">×</button>`}</span>`).join("")}</div>` : ""}
     <div class="row"><button class="btn primary" data-act="open" data-id="${m.id}">${m.locked ? "View match" : m.games.some(g => g.p[0]) ? "Open match" : "Set lineup"}</button>
-      ${m.locked ? `<button class="btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}">${REPORT_ICON}Match Report</button>` : `<button class="btn w" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"}>Log scratch</button>`}
+      ${compact ? "" : m.locked ? `<button class="btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}">${REPORT_ICON}Match Report</button>` : `<button class="btn w" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"}>Log scratch</button>`}
       ${(m.scratches || []).length ? `<span class="small muted">${m.scratches.length} scratch${m.scratches.length === 1 ? "" : "es"} this match</span>` : ""}</div>
   </div>`;
 }
@@ -876,12 +883,13 @@ function viewMatches(sid) {
   const list = seasonMatches(sid), cur = currentMatches(list);
   const cards = list.map(m => {
     const [mon, day, rest] = fmtDay(m.date), sc = score(m), no = matchNo(m);
-    return `<div class="mrow"><button class="mcard" data-act="open" data-id="${m.id}">
+    const open = S.ui.expanded?.has(m.id);
+    return `<div class="mitem ${open ? "open" : ""}"><div class="mrow"><button class="mcard" data-act="mtoggle" data-id="${m.id}" aria-expanded="${!!open}" title="${open ? "Hide" : "Show"} match details">
       <div class="mdate">${mon}<b>${day}</b></div>
       <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
         <div class="small muted">${esc(rest)}${fmtTime(m.time) ? " · " + fmtTime(m.time) : ""}${m.table ? " · " + esc(m.table) : ""}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${matchNotes(m).length ? " · has notes" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
-      <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span></span>
-    </button>${m.locked ? `<button class="btn scr-btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Match Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
+      <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span><span class="chev" aria-hidden="true"></span></span>
+    </button>${m.locked ? `<button class="btn scr-btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Match Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>${open ? `<div class="mexp">${currentCard(m, true)}</div>` : ""}</div>`;
   }).join("");
   return `
   <section style="display:grid;gap:12px">
@@ -2500,7 +2508,7 @@ function schPlan(imp, teams) {
 
 /* ---------- actions ---------- */
 // what still works on a team that's locked until its default PIN is changed
-const PIN_SAFE = new Set(["tab", "open", "back", "report-open", "report-close", "report-save", "notes-view", "close-modal", "sign-out", "pin-first", "team-open"]);
+const PIN_SAFE = new Set(["tab", "open", "mtoggle", "back", "report-open", "report-close", "report-save", "notes-view", "close-modal", "sign-out", "pin-first", "team-open"]);
 function editLineup(fn) { const m = S.matches[S.view.matchId]; if (m?.lineupFinal && !m.locked) { toast("The lineup is final. Tap Edit… in the Lineup section to change it."); render(); return; } editMatch(fn); }
 function editMatch(fn) { const id = S.view.matchId, m = S.matches[id]; if (!m) return; if (m.locked) { toast("This match is locked. Unlock it to make changes."); render(); return; } fn(m); persist("matches", id); render(); }
 function editSeason(id, fn) { const s = S.seasons[id]; if (!s) return; fn(s); persist("seasons", id); render(); }
@@ -2572,6 +2580,7 @@ document.addEventListener("click", e => {
   if (a === "close-modal") { if (e.target !== b) return; S.ui.modal = null; renderLayer(); return; }
   if (a === "tab") { S.view.tab = b.dataset.v; S.view.matchId = null; S.ui.armed = null; S.ui.unlock = null; render(); window.scrollTo(0, 0); return; }
   if (a === "open") { S.view.matchId = b.dataset.id; render(); window.scrollTo(0, 0); return; }
+  if (a === "mtoggle") { const ex = S.ui.expanded ||= new Set(), id = b.dataset.id; ex.has(id) ? ex.delete(id) : ex.add(id); render(); return; }
   if (a === "back") { S.view.matchId = null; S.ui.unlock = null; S.ui.relineup = null; render(); return; }
   if (a === "toggle-season") { const id = b.dataset.id, open = S.ui.openSeason === id || (S.ui.openSeason == null && id === curSeasonId()); S.ui.openSeason = open ? "" : id; render(); return; }
   if (a === "note") { S.ui.modal = { kind: "notes", matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g, redraw: true }; renderLayer(); return; }
