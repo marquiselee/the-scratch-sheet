@@ -63,7 +63,8 @@ Tone
 - Avoid flat sports-wire phrasing: "secured a victory", "solid performance", "came out on top", "a hard-fought battle", "showed resilience".
 - Camp and sass are welcome in moderation: up to two terms of endearment or diva flourishes per report when the voice suits them, never the same one twice. Don't lean on the same stock words every time ("honey", "darling", "the girls", "queens", "clutching pearls", "serving", "slay", "yas"); find fresher ways to say it.
 - One or two pool double entendres (racks, strokes, sinking it, pockets, going deep, balls in hand) are welcome when they land naturally. Suggestive and winking, never explicit: no sex acts, no anatomy, no crude or vulgar words, no profanity.
-- Tease the play, never the person: no jokes about bodies, looks, age, race, religion, HIV or anyone's identity; no slurs, including reclaimed ones. Shade about a scratch is fine; cruelty isn't. The opponent gets a nod, not mockery.
+- Criticism and roast-style humor about how people played are fine: a missed hanger, a scratch-fest, a bad safety, a sulky loss. What's never fine: attacking, disparaging, mocking, or promoting hatred or exclusion of anyone based on race, ethnicity, religion, gender, gender identity, sexual orientation, age, disability or national origin. No jokes about bodies or looks, and no slurs, including reclaimed ones.
+- Nothing vulgar or offensive, even if a team comment is. Never repeat crude language from a comment; paraphrase it clean or leave it out.
 - Vary the shape: don't open every sentence the same way, and don't start the summary with the score.
 
 Finding the story
@@ -99,8 +100,11 @@ Reply with one JSON object and nothing else:
 - angle: one short sentence naming the comic idea. It isn't shown on the card.
 - headline: at most 44 characters, punchy, no trailing period. It is printed in tall capital letters.
 - summary: 2 or 3 sentences, at most 250 characters in total. Tell the story of the night and work in the season trend. This is the funniest part of the card (see "Making the summary funny").
-- highs: rewrite each item in facts.highlights in your voice, same order, same count, each at most 80 characters. If there are none, return [].
-- lows: rewrite each item in facts.lowlights the same way. Keep the first one's player name and scratch count exactly. If there are none, return [].
+- highs and lows: up to 2 each, each at most 80 characters. Choose them yourself from two sources: the scoresheet lines in facts.highlights and facts.lowlights, and everything in facts.comments (game and match notes, tagged or not; a tag is the writer's hint, not a requirement).
+  - Keep only items that are relevant to the match and substantive: a great or awful shot, a run-out, a clutch game, a costly scratch, a dispute, a turning point, a standout or struggling player, how the team felt about the night. Skip filler and logistics ("late start", "poutine after", "table 3 is crooked") unless it genuinely shaped the match.
+  - Paraphrase in your voice to capture each comment's sentiment and the facts in it; don't copy it word for word. You may credit the author.
+  - If facts.mustLowlight is present, it must be the first lowlight: rephrase it, but keep the player's name and scratch count exactly.
+  - Prefer the strongest items over filling both slots. If nothing qualifies, return [].
 - Plain text only: no emoji, no hashtags, no markdown, no quotation marks around the whole string.`;
 
 const voiceNote = ([name, style]: [string, string]) => `
@@ -242,8 +246,9 @@ Deno.serve(async (req) => {
     const data = {
       headline: str(ai.headline, 56).replace(/[.!]+$/, ""),
       summary: str(ai.summary, 320),
-      highs: highs.length === Math.min(2, want("highlights")) ? highs : null,   // null → the app keeps its own lines
-      lows: lows.length === Math.min(2, want("lowlights")) ? lows : null,
+      // Claude picks 0–2 of each; an empty pick when the scoresheet had something falls back to the app's own lines (null)
+      highs: highs.length || !want("highlights") ? highs : null,
+      lows: lows.length || !want("lowlights") ? lows : null,
       voice: voice[0],
       angle: str(ai.angle, 200) || undefined,
     };

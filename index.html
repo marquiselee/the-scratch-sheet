@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v55 2026-10-16: Claude picks report highlights/lowlights from scoresheet lines and all notes (relevant, paraphrased); heavy-scratch line stays required.
   v54 2026-10-16: Match notes work like game notes: several per match, optional name and tag each, seen in the notes window; locked matches show Show Match Notes.
   v53 2026-10-16: Optional name on game notes and the match comment, remembered on the device; shown with the note and passed to Claude.
   v52 2026-10-16: Game notes: several per game, each with its own Highlight/Lowlight tag, viewed in the notes window. Locked matches show a Show Game Notes button instead of the edit and reorder buttons.
@@ -1971,7 +1972,8 @@ function reportData(id, raw) {
   });
   if (!lowsAuto.length && scrN >= 4) lowsAuto.push(`${scrN} scratches on the night.`);
   // the night's worst scratch count always makes the card, ahead of tagged comments
-  if (lowsAuto.length && /had \d+ scratches/.test(lowsAuto[0])) lows.unshift(lowsAuto.shift());
+  const mustLow = lowsAuto.length && /had \d+ scratches/.test(lowsAuto[0]) ? lowsAuto[0] : null;
+  if (mustLow) lows.unshift(lowsAuto.shift());
   for (const t of lowsAuto) { if (lows.length >= 2) break; if (!lows.includes(t)) lows.push(t); }
   const d = new Date((m.date || "") + "T12:00");
   // ---- storylines: what made this match distinctive, most notable first (feeds Claude's angle) ----
@@ -2048,7 +2050,7 @@ function reportData(id, raw) {
     trends: trends.slice(0, 3).map(t => `${t.k}: ${t.v}`),
     record: po ? { playoffs: fmtRec(poRec), overall: fmtRec(allRec) } : { season: fmtRec(regRec) },
     matchStreak: streak >= 2 ? `${streak} straight ${sc.res === "W" ? "wins" : "losses"}` : null,
-    highlights: highs.slice(0, 2), lowlights: lows.slice(0, 2),
+    highlights: highs.slice(0, 4), lowlights: lows.slice(0, 4), mustLowlight: mustLow || undefined,
   };
   const ai = !raw && aiReport(id);
   return {
