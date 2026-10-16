@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v59 2026-10-16: Expanded match rows: games on the left, sortable scratch table (game, player, type) on the right.
   v58 2026-10-16: Matches list rows expand in place to show the same details as the Next Match card.
   v57 2026-10-16: League schedule import (Excel/CSV) with preview, duplicate-safe team matching and Claude fallback; imported teams locked until their default PIN 0000 is changed; league venue and match table fields.
   v56 2026-10-16: Optional match start time (next to the date); shown on the card and list, orders doubleheaders, carried to new matches.
@@ -286,6 +287,17 @@ th{font:500 11px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;col
 .cur-game .who{min-width:0;overflow-wrap:anywhere}
 .cur-game .opp{color:var(--muted);font-size:12px}
 .cur-scr{display:flex;flex-wrap:wrap;gap:6px}
+.cur-split{display:grid;grid-template-columns:minmax(0,1.1fr) 1px minmax(0,1fr);gap:12px;align-items:start}
+.cur-div{background:var(--line);align-self:stretch}
+.cur-split .cur-game{gap:8px;font-size:13px}
+.scr-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.scr-tbl th,.scr-tbl td{border:0;padding:3px 4px;text-align:left;vertical-align:top}
+.scr-tbl td:first-child,.scr-tbl th:first-child{width:1.8em;color:var(--muted)}
+.scr-sort{all:unset;cursor:pointer;font:700 11px var(--f-mono,ui-monospace,monospace);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.scr-sort[aria-sort="ascending"],.scr-sort[aria-sort="descending"]{color:var(--ink)}
+.scr-row{cursor:pointer}.scr-row:hover td{background:var(--bg)}
+.scr-tbl-empty{align-self:center}
+@media (max-width:340px){.cur-split{grid-template-columns:1fr}.cur-div{display:none}}
 .scr{display:inline-flex;align-items:center;gap:6px;font-size:12px;border:1px solid var(--line);border-radius:999px;padding:4px 6px 4px 10px;background:var(--bg)}
 .scr b{font-weight:600}
 .scr-edit{border:0;background:none;font:inherit;color:inherit;cursor:pointer;padding:0;text-align:left}
@@ -854,6 +866,18 @@ function currentMatches(list) {
   if (last) return { title: `Last Match${many(on(last).length)}`, ms: on(last) };
   return null;
 }
+// scratches as a sortable table (expanded match rows)
+const SCR_SHORT = { table: "Table", pocket: "Pocket", off: "Off table", eight: "8-ball" };
+function scrTable(m) {
+  const list = (m.scratches || []).map(x => ({ x, game: (x.game ?? 0) + 1, player: pName(m.seasonId, x.player, m), type: SCR_SHORT[x.type] || scrLabel(x.type) }));
+  if (!list.length) return `<div class="scr-tbl-empty small muted">No scratches logged</div>`;
+  const st = S.ui.scrSort || { k: "game", dir: 1 };
+  list.sort((a, b) => (st.k === "game" ? a.game - b.game : a[st.k].localeCompare(b[st.k])) * st.dir || a.game - b.game || (a.x.at || 0) - (b.x.at || 0));
+  const th = (k, l) => `<th scope="col"><button class="scr-sort" data-act="scr-sort" data-k="${k}" aria-sort="${st.k === k ? (st.dir > 0 ? "ascending" : "descending") : "none"}">${l}${st.k === k ? (st.dir > 0 ? " ▲" : " ▼") : ""}</button></th>`;
+  return `<table class="scr-tbl"><thead><tr>${th("game", "G")}${th("player", "Player")}${th("type", "Scratch")}</tr></thead><tbody>
+    ${list.map(r => `<tr${m.locked ? "" : ` class="scr-row" data-act="edit-scratch" data-m="${m.id}" data-id="${r.x.id}" title="Edit scratch"`}><td>${r.game}</td><td>${esc(r.player)}</td><td>${esc(r.type)}</td></tr>`).join("")}
+  </tbody></table>`;
+}
 function currentCard(m, compact) {
   const sc = score(m), no = matchNo(m), n = (m.roster || []).length;
   const d = new Date((m.date || "") + "T12:00"), full = isNaN(d) ? "Date not set" : d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -872,8 +896,8 @@ function currentCard(m, compact) {
         <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : m.lineupFinal ? ' · <span class="tag">Lineup final</span>' : ""}</div></div>
       <div class="score"><b>${m.forfeit ? "FF" : sc.w + "–" + sc.l}</b>${sc.res ? `<span class="res ${sc.res}">${resLabel(sc.res)}</span>` : ""}</div>
     </div>`}
-    <div class="cur-games">${games}</div>
-    ${(m.scratches || []).length ? `<div class="cur-scr">${m.scratches.slice().reverse().map(x => `<span class="scr">${m.locked ? "" : `<button class="scr-edit w" data-act="edit-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Edit scratch">`}G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)}${m.locked ? "" : ` <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Remove scratch">×</button>`}</span>`).join("")}</div>` : ""}
+    ${compact ? `<div class="cur-split"><div class="cur-games">${games}</div><div class="cur-div" aria-hidden="true"></div>${scrTable(m)}</div>` : `<div class="cur-games">${games}</div>`}
+    ${compact ? "" : (m.scratches || []).length ? `<div class="cur-scr">${m.scratches.slice().reverse().map(x => `<span class="scr">${m.locked ? "" : `<button class="scr-edit w" data-act="edit-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Edit scratch">`}G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)}${m.locked ? "" : ` <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Remove scratch">×</button>`}</span>`).join("")}</div>` : ""}
     <div class="row"><button class="btn primary" data-act="open" data-id="${m.id}">${m.locked ? "View match" : m.games.some(g => g.p[0]) ? "Open match" : "Set lineup"}</button>
       ${compact ? "" : m.locked ? `<button class="btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}">${REPORT_ICON}Match Report</button>` : `<button class="btn w" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"}>Log scratch</button>`}
       ${(m.scratches || []).length ? `<span class="small muted">${m.scratches.length} scratch${m.scratches.length === 1 ? "" : "es"} this match</span>` : ""}</div>
@@ -2508,7 +2532,7 @@ function schPlan(imp, teams) {
 
 /* ---------- actions ---------- */
 // what still works on a team that's locked until its default PIN is changed
-const PIN_SAFE = new Set(["tab", "open", "mtoggle", "back", "report-open", "report-close", "report-save", "notes-view", "close-modal", "sign-out", "pin-first", "team-open"]);
+const PIN_SAFE = new Set(["tab", "open", "mtoggle", "scr-sort", "back", "report-open", "report-close", "report-save", "notes-view", "close-modal", "sign-out", "pin-first", "team-open"]);
 function editLineup(fn) { const m = S.matches[S.view.matchId]; if (m?.lineupFinal && !m.locked) { toast("The lineup is final. Tap Edit… in the Lineup section to change it."); render(); return; } editMatch(fn); }
 function editMatch(fn) { const id = S.view.matchId, m = S.matches[id]; if (!m) return; if (m.locked) { toast("This match is locked. Unlock it to make changes."); render(); return; } fn(m); persist("matches", id); render(); }
 function editSeason(id, fn) { const s = S.seasons[id]; if (!s) return; fn(s); persist("seasons", id); render(); }
@@ -2580,6 +2604,7 @@ document.addEventListener("click", e => {
   if (a === "close-modal") { if (e.target !== b) return; S.ui.modal = null; renderLayer(); return; }
   if (a === "tab") { S.view.tab = b.dataset.v; S.view.matchId = null; S.ui.armed = null; S.ui.unlock = null; render(); window.scrollTo(0, 0); return; }
   if (a === "open") { S.view.matchId = b.dataset.id; render(); window.scrollTo(0, 0); return; }
+  if (a === "scr-sort") { const k = b.dataset.k, st = S.ui.scrSort || { k: "game", dir: 1 }; S.ui.scrSort = { k, dir: st.k === k ? -st.dir : 1 }; render(); return; }
   if (a === "mtoggle") { const ex = S.ui.expanded ||= new Set(), id = b.dataset.id; ex.has(id) ? ex.delete(id) : ex.add(id); render(); return; }
   if (a === "back") { S.view.matchId = null; S.ui.unlock = null; S.ui.relineup = null; render(); return; }
   if (a === "toggle-season") { const id = b.dataset.id, open = S.ui.openSeason === id || (S.ui.openSeason == null && id === curSeasonId()); S.ui.openSeason = open ? "" : id; render(); return; }
