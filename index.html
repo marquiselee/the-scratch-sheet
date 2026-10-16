@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v54 2026-10-16: Match notes work like game notes: several per match, optional name and tag each, seen in the notes window; locked matches show Show Match Notes.
   v53 2026-10-16: Optional name on game notes and the match comment, remembered on the device; shown with the note and passed to Claude.
   v52 2026-10-16: Game notes: several per game, each with its own Highlight/Lowlight tag, viewed in the notes window. Locked matches show a Show Game Notes button instead of the edit and reorder buttons.
   v51 2026-10-15: Match Report buttons show a larger icon above the label.
@@ -452,6 +453,8 @@ const SCRATCH = [
 const scrLabel = k => SCRATCH.find(x => x.k === k)?.label || k;
 // game notes: a list per game; older matches kept a single comment, read as one note
 const gameNotes = g => Array.isArray(g?.notes) ? g.notes : (g?.comment || "").trim() ? [{ id: "legacy", text: g.comment.trim(), tag: g.commentTag || "" }] : [];
+const matchNotes = m => Array.isArray(m?.notes) ? m.notes : (m?.comment || "").trim() ? [{ id: "legacy", text: m.comment.trim(), tag: m.commentTag || "", ...(m.commentBy ? { by: m.commentBy } : {}) }] : [];
+const notesOf = (m, g) => g === "match" ? matchNotes(m) : gameNotes(m.games[g]);
 const TAG_LABEL = { hi: "Highlight", lo: "Lowlight" };
 // optional "your name" on notes, remembered on this device per team
 const noteNameKey = () => "ss-note-name-" + (S.teamId || "");
@@ -854,7 +857,7 @@ function viewMatches(sid) {
     return `<div class="mrow"><button class="mcard" data-act="open" data-id="${m.id}">
       <div class="mdate">${mon}<b>${day}</b></div>
       <div style="min-width:0"><div class="mtitle">vs ${esc(m.opponent || "Opponent TBD")}</div>
-        <div class="small muted">${esc(rest)}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${m.comment ? " · has note" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
+        <div class="small muted">${esc(rest)}${no.of > 1 ? ` · <span class="tag">Doubleheader · match ${no.n}</span>` : ""}${matchNotes(m).length ? " · has notes" : ""}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : ""}</div></div>
       <span class="score-wrap"><span class="pill ${sc.res}">${sc.res ? resLabel(sc.res) + " " : ""}${m.forfeit ? "by forfeit" : sc.w + "–" + sc.l}</span></span>
     </button>${m.locked ? `<button class="btn scr-btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}" title="View the match report">${REPORT_ICON}Match Report</button>` : `<button class="btn w scr-btn" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"} title="${!(m.roster || []).length ? "Check in players first" : "Log a scratch for this match"}">Log scratch${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</button>`}</div>`;
   }).join("");
@@ -931,9 +934,10 @@ function viewMatch(id) {
       <label class="f">Forfeit<select id="m-forfeit" class="w" data-act="forfeit"><option value="">No forfeit</option><option value="us" ${m.forfeit === "us" ? "selected" : ""}>We forfeited (fewer than 4 players)</option><option value="them" ${m.forfeit === "them" ? "selected" : ""}>Opponent forfeited</option></select></label>
     </div>
     <div class="row">
-      <button class="btn ${m.comment ? "has-note" : ""}" data-act="note" data-g="match">${m.comment ? "Edit match comment" : "Add match comment"}</button>
+      ${m.locked
+        ? (matchNotes(m).length ? `<span class="btn notes-btn" role="button" tabindex="0" data-act="notes-view" data-g="match">Show Match Notes <span class="note-count">${matchNotes(m).length}</span></span>` : `<span class="small muted">No match notes</span>`)
+        : `<button class="btn ${matchNotes(m).length ? "has-note" : ""}" data-act="note" data-g="match">${matchNotes(m).length ? `Match notes <span class="note-count">${matchNotes(m).length}</span>` : "Add match note"}</button>`}
     </div>
-    ${m.comment ? `<div class="comment-preview">${esc(m.comment)}${m.commentBy ? ` <span class="note-by">— ${esc(m.commentBy)}</span>` : ""}</div>` : ""}
   </section>
 
   <section class="panel">
@@ -1324,6 +1328,7 @@ function viewAdmin() {
 }
 
 function notesHead(m, gi) {
+  if (gi === "match") { const sc = score(m); return `<h3 id="nt" style="margin:0">Match notes</h3><div class="small muted">${esc(["vs " + (m.opponent || "Opponent TBD"), sc.res ? `${resLabel(sc.res)} ${sc.w}–${sc.l}` : ""].filter(Boolean).join(" · "))}</div>`; }
   const g = m.games[gi], ps = (g.p || []).filter(Boolean).map(id => pName(m.seasonId, id, m)).join(" & ");
   const r = { W: "Won", L: "Lost", FF: "Forfeited", NP: "Not played" }[g.result] || "";
   return `<h3 id="nt" style="margin:0">Game ${gi + 1} notes</h3>${ps || r ? `<div class="small muted">${esc([ps, r].filter(Boolean).join(" · "))}</div>` : ""}`;
@@ -1333,14 +1338,14 @@ function renderNotes(md, L) {
   const m = S.matches[md.matchId]; if (!m || m.locked) { S.ui.modal = null; L.innerHTML = ""; return; }
   if (L.querySelector("#note-text") && !md.redraw) return;   // don't wipe what's being typed on background re-renders
   md.redraw = false;
-  const notes = gameNotes(m.games[md.g]), ed = notes.find(n => n.id === md.editId);
+  const notes = notesOf(m, md.g), ed = notes.find(n => n.id === md.editId);
   L.innerHTML = `<div class="scrim" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="nt">
     <div>${notesHead(m, md.g)}</div>
     ${notes.length ? `<div class="note-list">${notes.map(n => `<div class="note-item ${n.id === md.editId ? "editing" : ""}">
       <div class="note-text">${esc(n.text)} ${byLine(n)}</div>
       <div class="row spread"><span>${n.tag ? `<span class="tag ${n.tag}">${TAG_LABEL[n.tag]}</span>` : `<span class="small muted">Note</span>`}</span>
         <span class="row"><button class="btn small ghost" data-act="note-edit" data-id="${n.id}">Edit</button><button class="btn small ghost ${md.armDel === n.id ? "danger armed" : ""}" data-act="note-del" data-id="${n.id}">${md.armDel === n.id ? "Delete?" : "Delete"}</button></span></div>
-    </div>`).join("")}</div>` : `<p class="small muted" style="margin:0">No notes for this game yet.</p>`}
+    </div>`).join("")}</div>` : `<p class="small muted" style="margin:0">No notes for this ${md.g === "match" ? "match" : "game"} yet.</p>`}
     <label class="f">${ed ? "Edit note" : "Add a note"}<textarea id="note-text" class="w" placeholder="Break-and-run, key shots, anything to remember…">${esc(ed?.text || "")}</textarea></label>
     ${nameField(ed ? ed.by : getNoteName(), m)}
     <label class="f">Show on the match report as<select id="note-tag" class="w"><option value="">Just a note (not on the report)</option><option value="hi" ${ed?.tag === "hi" ? "selected" : ""}>Highlight</option><option value="lo" ${ed?.tag === "lo" ? "selected" : ""}>Lowlight</option></select></label>
@@ -1352,10 +1357,10 @@ function renderNotes(md, L) {
 // read-only list (locked match)
 function renderNotesView(md, L) {
   const m = S.matches[md.matchId]; if (!m) { S.ui.modal = null; L.innerHTML = ""; return; }
-  const notes = gameNotes(m.games[md.g]);
+  const notes = notesOf(m, md.g);
   L.innerHTML = `<div class="scrim" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="nt">
     <div>${notesHead(m, md.g)}</div>
-    ${notes.length ? `<div class="note-list">${notes.map(n => `<div class="note-item"><div class="note-text">${esc(n.text)} ${byLine(n)}</div>${n.tag ? `<div><span class="tag ${n.tag}">${TAG_LABEL[n.tag]}</span></div>` : ""}</div>`).join("")}</div>` : `<p class="small muted" style="margin:0">No notes for this game.</p>`}
+    ${notes.length ? `<div class="note-list">${notes.map(n => `<div class="note-item"><div class="note-text">${esc(n.text)} ${byLine(n)}</div>${n.tag ? `<div><span class="tag ${n.tag}">${TAG_LABEL[n.tag]}</span></div>` : ""}</div>`).join("")}</div>` : `<p class="small muted" style="margin:0">No notes for this ${md.g === "match" ? "match" : "game"}.</p>`}
     <div class="row spread"><span></span><button class="btn primary w" data-act="close-modal">Close</button></div>
   </div></div>`;
 }
@@ -1388,18 +1393,7 @@ function renderLayer() {
   if (md.kind === "scratch") { renderScratch(md, L); return; }
   if (md.kind === "notes") { renderNotes(md, L); return; }
   if (md.kind === "notes-view") { renderNotesView(md, L); return; }
-  if (L.querySelector("#modal-text")) return;
-  const m = S.matches[md.matchId]; if (!m) { S.ui.modal = null; L.innerHTML = ""; return; }
-  const val = md.g === "match" ? m.comment : m.games[md.g].comment;
-  const tag = md.g === "match" ? (m.commentTag || "") : (m.games[md.g].commentTag || "");
-  L.innerHTML = `<div class="scrim" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
-    <h3 id="mt">${md.g === "match" ? "Match comment" : `Game ${md.g + 1} comment`}</h3>
-    <textarea id="modal-text" class="w" placeholder="Break-and-run, key shots, anything to remember…">${esc(val)}</textarea>
-    ${md.g === "match" ? nameField(m.comment ? m.commentBy : getNoteName(), m) : ""}
-    <label class="f">Show on the match report as<select id="modal-tag" class="w"><option value="">Just a note (not on the report)</option><option value="hi" ${tag === "hi" ? "selected" : ""}>Highlight</option><option value="lo" ${tag === "lo" ? "selected" : ""}>Lowlight</option></select></label>
-    <div class="row spread"><button class="btn ghost" data-act="close-modal">Cancel</button><button class="btn primary w" data-act="save-note">Save comment</button></div>
-  </div></div>`;
-  setTimeout(() => $("#modal-text")?.focus(), 0);
+  S.ui.modal = null; L.innerHTML = "";
 }
 
 /* ---------- sign-in screen ---------- */
@@ -1954,7 +1948,7 @@ function reportData(id, raw) {
   else s1 = `${opp} took ${nums(lost)} on a tough night at the table.`;
   const s2 = (trends.find(t => t.icon !== "cal") || trends[0])?.s2 || "";
   // highlights / lowlights: tagged comments first, then what the scoresheet shows
-  const tagged = t => [...games.flatMap(g => g.notes.filter(x => x.tag === t).map(x => x.text.trim())), ...(m.commentTag === t && m.comment ? [m.comment.trim()] : [])];
+  const tagged = t => [...games.flatMap(g => g.notes.filter(x => x.tag === t).map(x => x.text.trim())), ...matchNotes(m).filter(x => x.tag === t && (x.text || "").trim()).map(x => x.text.trim())];
   const highs = tagged("hi"), lows = tagged("lo");
   if (g5 && g5.r === "W" && highs.length < 2) highs.push(`${pair(g5.p)} won the deciding game 5.`);
   if (comeback && highs.length < 2) highs.push(`Battled back from ${trail.join("–")} down.`);
@@ -2037,7 +2031,7 @@ function reportData(id, raw) {
   story.push(`Team names: ${team} vs ${opp}. Consider whether either side lived up to (or betrayed) its name tonight.`);
   const comments = [
     ...games.flatMap(g => g.notes.map(x => ({ game: g.n, result: { W: "won", L: "lost", FF: "forfeited" }[g.r] || "", players: g.p.map(name), tag: x.tag === "hi" ? "highlight" : x.tag === "lo" ? "lowlight" : undefined, text: x.text.trim(), by: x.by || undefined }))),
-    ...((m.comment || "").trim() ? [{ match: true, tag: m.commentTag === "hi" ? "highlight" : m.commentTag === "lo" ? "lowlight" : undefined, text: m.comment.trim(), by: m.commentBy || undefined }] : []),
+    ...matchNotes(m).filter(x => (x.text || "").trim()).map(x => ({ match: true, tag: x.tag === "hi" ? "highlight" : x.tag === "lo" ? "lowlight" : undefined, text: x.text.trim(), by: x.by || undefined })),
   ];
   const facts = {
     storylines: story, comments: comments.length ? comments : undefined,
@@ -2223,8 +2217,8 @@ document.addEventListener("click", e => {
   if (a === "open") { S.view.matchId = b.dataset.id; render(); window.scrollTo(0, 0); return; }
   if (a === "back") { S.view.matchId = null; S.ui.unlock = null; S.ui.relineup = null; render(); return; }
   if (a === "toggle-season") { const id = b.dataset.id, open = S.ui.openSeason === id || (S.ui.openSeason == null && id === curSeasonId()); S.ui.openSeason = open ? "" : id; render(); return; }
-  if (a === "note") { if (b.dataset.g === "match") S.ui.modal = { matchId: S.view.matchId, g: "match", hadComment: !!S.matches[S.view.matchId]?.comment }; else S.ui.modal = { kind: "notes", matchId: S.view.matchId, g, redraw: true }; renderLayer(); return; }
-  if (a === "notes-view") { S.ui.modal = { kind: "notes-view", matchId: S.view.matchId, g }; renderLayer(); return; }
+  if (a === "note") { S.ui.modal = { kind: "notes", matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g, redraw: true }; renderLayer(); return; }
+  if (a === "notes-view") { S.ui.modal = { kind: "notes-view", matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g }; renderLayer(); return; }
   if (a === "note-edit") { const md = S.ui.modal; md.editId = b.dataset.id; md.armDel = null; md.redraw = true; renderLayer(); return; }
   if (a === "note-cancel-edit") { const md = S.ui.modal; md.editId = null; md.redraw = true; renderLayer(); return; }
   if (a === "note-del" || a === "note-save") {
@@ -2235,20 +2229,19 @@ document.addEventListener("click", e => {
     if (a === "note-save" && !md.editId) setNoteName(by);
     if (a === "note-save" && !text) { toast("Type a note first."); return; }
     editMatch(m => {
-      const g = m.games[md.g], list = gameNotes(g).map(n => n.id === "legacy" ? { ...n, id: uid() } : { ...n });
-      const legacyId = gameNotes(g)[0]?.id === "legacy" ? list[0].id : null;
+      const g = md.g === "match" ? m : m.games[md.g], cur = notesOf(m, md.g), list = cur.map(n => n.id === "legacy" ? { ...n, id: uid() } : { ...n });
+      const legacyId = cur[0]?.id === "legacy" ? list[0].id : null;
       const target = md.editId === "legacy" ? legacyId : md.editId, del = b.dataset.id === "legacy" ? legacyId : b.dataset.id;
       let next = list;
       if (a === "note-del") next = list.filter(n => n.id !== del);
       else if (target) next = list.map(n => n.id === target ? { ...n, text, tag, by: by || undefined, edited: Date.now() } : n);
       else next = [...list, { id: uid(), text, tag, ...(by ? { by } : {}), at: Date.now() }];
-      g.notes = next; delete g.comment; delete g.commentTag;
+      g.notes = next; delete g.comment; delete g.commentTag; delete g.commentBy;
     });
     md.editId = null; md.armDel = null; md.redraw = true; renderLayer();
     toast(a === "note-del" ? "Note deleted" : "Note saved"); return;
   }
   if (!S.canWrite) return;
-  if (a === "save-note") { const v = $("#modal-text").value.trim(), tg = $("#modal-tag")?.value || "", md = S.ui.modal, byV = ($("#note-by")?.value || "").trim().slice(0, 40); if (md.g === "match" && v && !md.hadComment) setNoteName(byV); S.ui.modal = null; editMatch(m => { if (md.g === "match") { const by = byV; m.comment = v; m.commentTag = v ? tg : ""; if (v && by) m.commentBy = by; else delete m.commentBy; } else { m.games[md.g].comment = v; m.games[md.g].commentTag = v ? tg : ""; } }); renderLayer(); return; }
   if ((a === "add-sub" || a === "rm-sub") && S.matches[S.view.matchId]?.lineupFinal) { toast("The lineup is final. Tap Edit… in the Lineup section to change it."); return; }
   if (a === "add-sub") {
     const inp = $("#sub-name"), name = inp?.value.trim(); if (!name) { inp?.focus(); return; }
