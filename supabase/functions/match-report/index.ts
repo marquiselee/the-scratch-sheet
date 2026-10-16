@@ -100,11 +100,12 @@ Reply with one JSON object and nothing else:
 - angle: one short sentence naming the comic idea. It isn't shown on the card.
 - headline: at most 44 characters, punchy, no trailing period. It is printed in tall capital letters.
 - summary: 2 or 3 sentences, at most 250 characters in total. Tell the story of the night and work in the season trend. This is the funniest part of the card (see "Making the summary funny").
-- highs and lows: up to 2 each, each at most 80 characters. Choose them yourself from two sources: the scoresheet lines in facts.highlights and facts.lowlights, and everything in facts.comments (game and match notes, tagged or not; a tag is the writer's hint, not a requirement).
+- highs and lows: up to 2 each, each at most 80 characters, written in this report's voice. Draw from three sources: the scoresheet lines in facts.highlights and facts.lowlights; everything in facts.comments (game and match notes, tagged or not; a tag is the writer's hint, not a requirement); and your own observations from facts.storylines, facts.games and facts.players (a clutch game-5 pair, a player who went unbeaten, a comeback, a revenge win, a perfect night spoiled, a scratch on the 8 that cost a game, a skeleton crew that held on).
   - Keep only items that are relevant to the match and substantive: a great or awful shot, a run-out, a clutch game, a costly scratch, a dispute, a turning point, a standout or struggling player, how the team felt about the night. Skip filler and logistics ("late start", "poutine after", "table 3 is crooked") unless it genuinely shaped the match.
   - Paraphrase in your voice to capture each comment's sentiment and the facts in it; don't copy it word for word. You may credit the author.
   - If facts.mustLowlight is present, it must be the first lowlight: rephrase it, but keep the player's name and scratch count exactly.
-  - Prefer the strongest items over filling both slots. If nothing qualifies, return [].
+  - Your own highlights and lowlights are welcome, especially when there are few or no comments. They must rest on facts you were given, stay relevant to this match, and be fun to read: give each one the voice's attitude, not a box-score restatement.
+  - Usually fill both slots of each. Return fewer only when the match truly offers less (a forfeit, say); a sweep may have no real lowlight, and a shutout loss may have only a defiant highlight.
 - Plain text only: no emoji, no hashtags, no markdown, no quotation marks around the whole string.`;
 
 const voiceNote = ([name, style]: [string, string]) => `
