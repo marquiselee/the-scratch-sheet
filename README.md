@@ -74,4 +74,4 @@ A GitHub Action (`.github/workflows/keepalive.yml`) pings Supabase twice a week 
 
 ## License
 
-Copyright (c) 2026 marquiselee. All rights reserved. See [LICENSE](LICENSE). This code is not open source.
+Copyright (c) 2026 Marquise Lee. All rights reserved. See [LICENSE](LICENSE). This code is not open source.
