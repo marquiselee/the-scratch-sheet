@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
-  v61 2026-10-16: Phone top bar: smaller buttons, larger logo and name (stacked THE / SCRATCH / SHEET).
+  v61 2026-10-16: Phone top bar: smaller buttons; logo name stays on one line and scales with the screen.
   v60 2026-10-16: "+ Home Screen" button on phones (install prompt on Android, steps on iPhone); service worker loads the newest app when online; open apps offer a reload when a new version is live.
   v59 2026-10-16: Expanded match rows: games on the left, sortable scratch table (game, player, type) on the right.
   v58 2026-10-16: Matches list rows expand in place to show the same details as the Next Match card.
@@ -133,8 +133,10 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
   #topbar .tb-right{gap:6px}
   #topbar .tb-exit{font-size:11.5px;padding:4px 8px;min-height:28px;border-radius:7px}
   #topbar .tb-id img{width:30px;height:30px}
-  #topbar.has-install .tb-name{font-size:19px;line-height:.95;white-space:normal;max-width:7.5ch}
-  #topbar.has-install .tb-the{display:block;font:500 9px/1.3 var(--f-mono,ui-monospace,monospace);letter-spacing:.32em;color:#9fd0f2}
+  #topbar .tb{padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px));gap:8px}
+  #topbar .tb-id{gap:7px;min-width:0}
+  #topbar.has-install .tb-name{white-space:nowrap;font-size:clamp(10px,calc(5.3vw - 6.5px),20px);letter-spacing:.01em}
+  #topbar .tb-exit{font-size:10.5px;padding:4px 6px}
 }
 .install-steps{margin:0;padding-left:22px;display:grid;gap:8px;font-size:15px}
 .upd{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:30;display:flex;gap:12px;align-items:center;background:#16211b;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:14px;width:max-content;max-width:calc(100% - 24px)}
