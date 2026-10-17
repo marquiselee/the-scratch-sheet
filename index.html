@@ -258,8 +258,9 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .legend{font-size:12px;color:var(--muted)}
 .tools{display:flex;gap:4px}
 .has-note{color:var(--chalk)}
-.trend-seg{max-width:560px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
-.trend-seg button{font-size:12px;padding-left:2px;padding-right:2px;min-width:0}
+.seg.trend-seg{max-width:560px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
+.seg.trend-seg button{font-size:11px;letter-spacing:-.02em;padding:8px 2px;min-height:38px;min-width:0}
+.seg.trend-seg button[aria-pressed="true"]{background:var(--cloth);color:#fff}
 .trend-metrics{display:flex;flex-wrap:wrap;gap:6px}
 .chip-btn{font:600 13px var(--f-body);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:5px 11px;cursor:pointer}
 .chip-btn[aria-pressed="true"]{background:var(--cloth);border-color:var(--cloth);color:#fff}
