@@ -146,6 +146,43 @@ async function placeAndWeather(city: string, date: string) {
   } catch { return null; }
 }
 
+// ---------- visits: one per device, team and day, with approximate location ----------
+// Location is the US state for US visitors and only the country elsewhere. The IP address is used for
+// the lookup and then discarded; it is never stored.
+async function geoFor(req: Request) {
+  const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || req.headers.get("cf-connecting-ip") || "";
+  let country = (req.headers.get("cf-ipcountry") || "").toUpperCase(), region = "";
+  const tryJson = async (u: string) => { try { const r = await fetch(u, { signal: AbortSignal.timeout(3000), headers: { "user-agent": "scratch-sheet" } }); return r.ok ? await r.json() : null; } catch { return null; } };
+  if (ip && (!country || country === "US")) {
+    const a = await tryJson(`https://ipapi.co/${encodeURIComponent(ip)}/json/`);
+    if (a && !a.error && a.country_code) { country = String(a.country_code).toUpperCase(); region = a.region_code || ""; }
+    else {
+      const b = await tryJson(`https://ipwho.is/${encodeURIComponent(ip)}`);
+      if (b && b.success !== false && b.country_code) { country = String(b.country_code).toUpperCase(); region = b.region_code || ""; }
+    }
+  }
+  if (!/^[A-Z]{2}$/.test(country) || country === "XX" || country === "T1") return { country: null, region: null };
+  return { country, region: country === "US" && /^[A-Z]{2}$/.test(region) ? region : null };
+}
+async function recordVisit(req: Request, body: any, asUser: any, url: string, service: string) {
+  const device = String(body.device || ""), teamId = String(body.team || "");
+  if (!/^[A-Za-z0-9-]{16,64}$/.test(device) || !/^[0-9a-f-]{36}$/i.test(teamId)) return json({ error: "Bad visit." }, 400);
+  const { data: team } = await asUser.from("teams").select("id,league_id").eq("id", teamId).maybeSingle();   // row-level security: only teams the caller can open
+  if (!team) return json({ error: "Team not found." }, 404);
+  const admin = createClient(url, service, { auth: { persistSession: false } });
+  const { data: u } = await asUser.auth.getUser();
+  const { data: who } = u?.user ? await admin.from("admins").select("role").eq("user_id", u.user.id).maybeSingle() : { data: null };
+  const role = who?.role || "member";
+  const today = new Date().toISOString().slice(0, 10);
+  const { error: de } = await admin.from("device_activity").insert({ device_id: device, day: today, team_id: team.id, league_id: team.league_id, role });
+  if (de && de.code !== "23505") console.error("device_activity", de);
+  if (de?.code === "23505") return json({ ok: true, repeat: true });   // already counted today
+  const geo = await geoFor(req);
+  const { error: ee } = await admin.from("events").insert({ type: "visit", league_id: team.league_id, team_id: team.id, device_id: device, role, ...geo });
+  if (ee) console.error("events", ee);
+  return json({ ok: true });
+}
+
 // ---------- league schedule reading (fallback for layouts the app can't parse itself) ----------
 const SCHEDULE_PROMPT = `You read recreational pool league schedules exported from spreadsheets and return every scheduled match as JSON.
 The input lists each non-empty cell as COLUMNROW=value, one spreadsheet row per line, sheet by sheet.
@@ -208,6 +245,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     if (body.action === "schedule") return await readSchedule(body, u.user.id, KEY, url, service);
+    if (body.action === "visit") return await recordVisit(req, body, asUser, url, service);
     const matchId = String(body.matchId || ""), force = !!body.force, facts = body.facts || {};
     if (!/^[A-Za-z0-9_-]{4,64}$/.test(matchId)) return json({ error: "Bad match id." }, 400);
     const { data: row } = await asUser.from("matches").select("id,team_id,data").eq("id", matchId).maybeSingle();
