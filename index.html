@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v64 2026-10-16: "Owner" is now called Site admin; site admins get a Site tab with stats across all leagues (migration 008).
   v63 2026-10-16: Match report has a second swipeable card with every error (scratch), match notes and game notes; Save image saves the card on screen.
   v62 2026-10-16: Phone top bar: name sized from the space actually available (measured after fonts load), larger cube.
   v61 2026-10-16: Phone top bar: smaller buttons; logo name on one line, sized to fill the space beside the buttons.
@@ -254,6 +255,15 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .legend{font-size:12px;color:var(--muted)}
 .tools{display:flex;gap:4px}
 .has-note{color:var(--chalk)}
+.site-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.site-tile{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:2px;min-width:0}
+.site-k{font:700 11px var(--f-mono,ui-monospace,monospace);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.site-v{font:800 30px/1.05 var(--f-display);font-variant-numeric:tabular-nums}
+.site-bars{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px;align-items:end;height:120px;padding-top:4px}
+.site-bar{display:grid;grid-template-rows:1fr auto auto;justify-items:center;height:100%;font-size:11px;min-width:0}
+.site-bar span{align-self:end;width:100%;max-width:28px;background:var(--cloth);border-radius:4px 4px 0 0;min-height:2px}
+.site-bar b{font-size:11px}.site-bar i{font-style:normal;color:var(--muted);font-size:10px}
+@media (max-width:520px){.site-bar:nth-child(even) i{visibility:hidden}}
 .imp-box{display:grid;gap:12px;border-top:1px solid var(--line);padding-top:14px;margin-top:4px}
 .file-btn{justify-self:start;cursor:pointer}
 .imp-teams{display:grid;gap:6px;max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px}
@@ -826,7 +836,7 @@ async function boot() {
 }
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v63";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v64";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -885,7 +895,7 @@ function render() {
   const app = $("#app"), bar = $("#topbar");
   app.className = "wrap" + (S.canWrite ? "" : " ro");
   if (S.phase === "app") {
-    const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`;
+    const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Site admin" : S.role === "league" ? "League admin" : "Team admin"}`;
     bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg?v=27" alt=""><span class="tb-name"><span class="tb-the">The </span>Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span>${showInstall() ? `<button class="tb-exit tb-install" data-act="install" title="Add The Scratch Sheet to your Home Screen">+ Home Screen</button>` : ""}<button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
     bar.hidden = false; bar.classList.toggle("has-install", showInstall()); fitBrand();
   } else { bar.hidden = true; bar.innerHTML = ""; }
@@ -902,6 +912,7 @@ function render() {
   const tabs = [["matches","Matches"],["standings","Stats"]];
   if (isAdmin() && S.teamId) tabs.push(["admin","Team admin"]);
   if (isLeagueRole()) tabs.push(["league","League"]);
+  if (S.role === "owner") tabs.push(["site","Site"]);
   tabs.push(["rules","Rules"]);
   if (!tabs.some(([k]) => k === S.view.tab)) S.view.tab = S.teamId ? "matches" : "league";
   app.innerHTML = `
@@ -916,9 +927,9 @@ function render() {
     <nav style="--n:${tabs.length}">${tabs.map(([k, l]) => `<button data-act="tab" data-v="${k}" aria-current="${S.view.tab === k}"${k === "rules" ? ' class="push"' : ""}>${l}</button>`).join("")}</nav>
   </header>
   <main>
-    ${S.pinDefault && S.teamId && S.view.tab !== "league" && S.view.tab !== "rules" ? viewPinGate() : ""}
-    <div class="${S.pinDefault && S.teamId && S.view.tab !== "league" && S.view.tab !== "rules" ? "pin-locked" : ""}" style="display:contents">
-    ${S.view.tab === "league" ? viewLeague() : S.view.tab === "rules" ? viewRules() : !S.teamId ? `<div class="panel empty"><p>Create a league and its first team on the League tab.</p></div>` : S.view.tab === "admin" ? viewAdmin() : S.view.tab === "rules" ? viewRules() : !s ? viewNoSeason() : S.view.tab === "standings" ? viewStandings(sid) : S.view.matchId && S.matches[S.view.matchId] ? viewMatch(S.view.matchId) : viewMatches(sid)}
+    ${S.pinDefault && S.teamId && !["league", "rules", "site"].includes(S.view.tab) ? viewPinGate() : ""}
+    <div class="${S.pinDefault && S.teamId && !["league", "rules", "site"].includes(S.view.tab) ? "pin-locked" : ""}" style="display:contents">
+    ${S.view.tab === "site" ? viewSite() : S.view.tab === "league" ? viewLeague() : S.view.tab === "rules" ? viewRules() : !S.teamId ? `<div class="panel empty"><p>Create a league and its first team on the League tab.</p></div>` : S.view.tab === "admin" ? viewAdmin() : S.view.tab === "rules" ? viewRules() : !s ? viewNoSeason() : S.view.tab === "standings" ? viewStandings(sid) : S.view.matchId && S.matches[S.view.matchId] ? viewMatch(S.view.matchId) : viewMatches(sid)}
     </div>
   </main>`;
   renderLayer();
@@ -1544,13 +1555,13 @@ function viewGate() {
   if (S.leagues === null) return `<section class="panel gate"><p class="muted" style="margin:0">Loading…</p></section>`;
   if (!S.hasLeague) return `
   <section class="panel gate">
-    <div><div class="eyebrow">First-time setup</div><h2>Create the owner account</h2></div>
-    <p class="small muted" style="margin:0">The owner runs every league: creates leagues and seasons, adds teams, and appoints league and team admins. Set this up yourself before you share the link.</p>
+    <div><div class="eyebrow">First-time setup</div><h2>Create the site admin account</h2></div>
+    <p class="small muted" style="margin:0">The site admin runs every league: creates leagues and seasons, adds teams, and appoints league and team admins. Set this up yourself before you share the link.</p>
     ${msg}
     <label class="f">Your email<input type="email" id="su-user" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com"></label>
     <label class="f">Password<input type="password" id="su-pass" autocomplete="new-password" placeholder="At least 8 characters"></label>
     <label class="f">Confirm password<input type="password" id="su-pass2" autocomplete="new-password"></label>
-    <button class="btn primary" data-act="gate-setup" ${busyAttr}>${g.busy ? "Setting up…" : "Create owner account"}</button>
+    <button class="btn primary" data-act="gate-setup" ${busyAttr}>${g.busy ? "Setting up…" : "Create site admin account"}</button>
   </section>`;
   const leagueSel = S.leagues.length ? `<label class="f">League<select id="gate-league">${S.leagues.length > 1 ? `<option value="">Choose your league</option>` : ""}${S.leagues.map(l => `<option value="${l.id}" ${l.id === g.leagueId ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></label>` : `<p class="small muted" style="margin:0">No leagues yet. An admin needs to set one up.</p>`;
   return `
@@ -1680,6 +1691,54 @@ function viewPinGate() {
     ${isAdmin() ? `<div class="prow"><input type="password" id="first-pin" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New PIN"><button class="btn primary" data-act="pin-first">Set PIN</button></div>` : `<p class="small muted" style="margin:0">Ask your team or league admin to set it.</p>`}
   </section>`;
 }
+// ---------- site admin: stats across every league ----------
+async function loadSiteStats() {
+  if (S.site?.loading) return;
+  S.site = { ...(S.site || {}), loading: true }; render();
+  const { data, error } = await sb.rpc("site_stats");
+  S.site = { loading: false, data: error ? null : data, error: error ? errMsg(error) : null, at: Date.now() }; render();
+}
+function viewSite() {
+  const st = S.site;
+  if (!st || (!st.data && !st.loading && !st.error)) { loadSiteStats(); return `<h2>Site</h2><div class="panel"><p class="muted" style="margin:0">Loading site stats…</p></div>`; }
+  if (st.error) return `<h2>Site</h2><div class="panel"><div class="notes"><div class="e">${esc(/site_stats|function/i.test(st.error) ? "Site stats need database update 008. Run supabase/migrations/008_site_stats.sql in the Supabase SQL Editor, then reload." : st.error)}</div></div><button class="btn w" data-act="site-refresh">Try again</button></div>`;
+  if (!st.data) return `<h2>Site</h2><div class="panel"><p class="muted" style="margin:0">Loading site stats…</p></div>`;
+  const d = st.data, t = d.totals || {}, a = d.activity || {}, n = x => Number(x || 0).toLocaleString();
+  const tile = (k, v, sub) => `<div class="site-tile"><div class="site-k">${k}</div><div class="site-v">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ""}</div>`;
+  const ago = iso => { if (!iso) return "—"; const m = (Date.now() - Date.parse(iso)) / 60000; return m < 60 ? `${Math.max(1, Math.round(m))} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+  const weeks = d.weeks || [], max = Math.max(1, ...weeks.map(w => w.matches));
+  const cost = (t.ai_writeups || 0) * 0.0006;
+  return `
+  <div class="row spread"><h2>Site</h2><span class="row"><span class="small muted">Updated ${ago(d.generated_at)}</span><button class="btn small" data-act="site-refresh" ${st.loading ? "disabled" : ""}>${st.loading ? "Refreshing…" : "Refresh"}</button></span></div>
+  <section class="panel"><h3>Across all leagues</h3>
+    <div class="site-grid">
+      ${tile("Leagues", n(t.leagues), `${n(t.seasons)} season${t.seasons === 1 ? "" : "s"}`)}
+      ${tile("Teams", n(t.teams), t.teams_default_pin ? `${n(t.teams_default_pin)} still on PIN 0000` : "")}
+      ${tile("Players", n(t.players), "on current rosters")}
+      ${tile("Matches", n(t.matches), `${n(t.matches_played)} played · ${n(t.matches_upcoming)} upcoming`)}
+      ${tile("Games", n(t.games), `${n(t.matches_locked)} matches locked`)}
+      ${tile("Errors", n(t.scratches), t.games ? `${(t.scratches / t.games).toFixed(2)} per game` : "")}
+      ${tile("Match reports", n(t.reports), `${n(t.ai_writeups)} Claude write-ups · ≈$${cost.toFixed(2)}`)}
+      ${tile("Admins", n((t.site_admins || 0) + (t.league_admins || 0) + (t.team_admins || 0)), `${n(t.site_admins)} site · ${n(t.league_admins)} league · ${n(t.team_admins)} team`)}
+    </div></section>
+  <section class="panel"><h3>Activity</h3>
+    <div class="site-grid">
+      ${tile("Team sign-ins", n(a.signins_7), `last 7 days · ${n(a.signins_30)} in 30`)}
+      ${tile("People signed in", n(a.people_30), "last 30 days (by device)")}
+      ${tile("Matches edited", n(a.matches_edited_7), `last 7 days · ${n(a.matches_edited_30)} in 30`)}
+      ${tile("Active teams", n(a.active_teams_30), "edited a match in 30 days")}
+      ${a.failed_pins_7 ? tile("Wrong PINs", n(a.failed_pins_7), "last 7 days") : ""}
+    </div>
+    ${weeks.length ? `<div class="site-k" style="margin-top:6px">Matches played per week · last 12 weeks</div>
+    <div class="site-bars">${weeks.map(w => `<div class="site-bar" title="Week of ${esc(w.week)}: ${w.matches} matches, ${w.scratches} errors"><span style="height:${Math.round(100 * w.matches / max)}%"></span><b>${w.matches}</b><i>${esc(w.week.slice(5).replace("-", "/"))}</i></div>`).join("")}</div>` : ""}
+    <p class="small muted" style="margin:0">Sign-ins count PIN entries, which are kept for 30 days. Admin email sign-ins aren't included.</p>
+  </section>
+  <section class="panel"><h3>Leagues</h3>
+    <div class="tbl"><table><thead><tr><th>League</th><th>Season</th><th>Teams</th><th>Players</th><th>Played</th><th>Locked</th><th>Errors</th><th>Reports</th><th>Last activity</th></tr></thead><tbody>
+      ${(d.leagues || []).map(l => `<tr><td><b>${esc(l.name)}</b>${l.city ? `<div class="small muted">${esc(l.city)}</div>` : ""}</td><td>${esc(l.season || "—")}</td><td>${n(l.teams)}</td><td>${n(l.players)}</td><td>${n(l.played)}<span class="muted"> / ${n(l.matches)}</span></td><td>${n(l.locked)}</td><td>${n(l.scratches)}</td><td>${n(l.reports)}</td><td>${ago(l.last_activity)}</td></tr>`).join("") || `<tr><td colspan="9" class="muted">No leagues yet.</td></tr>`}
+    </tbody></table></div>
+  </section>`;
+}
 function viewAccount() {
   return `<section class="panel">
     <h3>Your account <span class="muted small">${esc(S.username)}</span></h3>
@@ -1738,8 +1797,8 @@ function viewLeague() {
         ${pinOpen ? `<div class="prow" style="grid-column:1/-1"><input type="password" id="tp-${t.id}" class="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="New 4-digit PIN"><button class="btn w primary" data-act="team-pin-save" data-id="${t.id}">Save PIN</button></div>` : ""}
       </div>`; };
   const admins = S.leagueAdmins;
-  const roleLabel = a => a.role === "owner" ? "Owner · all leagues" : a.role === "league" ? "League admin · " + esc(lname(a.league_id)) : "Team admin · " + esc(tname(a.team_id));
-  const roleOpts = sel => (owner ? `<option value="owner" ${sel === "owner" ? "selected" : ""}>Owner (all leagues)</option>` + leagues.map(l => `<option value="league:${l.id}" ${sel === "league:" + l.id ? "selected" : ""}>League admin · ${esc(l.name)}</option>`).join("") : "")
+  const roleLabel = a => a.role === "owner" ? "Site admin · all leagues" : a.role === "league" ? "League admin · " + esc(lname(a.league_id)) : "Team admin · " + esc(tname(a.team_id));
+  const roleOpts = sel => (owner ? `<option value="owner" ${sel === "owner" ? "selected" : ""}>Site admin (all leagues)</option>` + leagues.map(l => `<option value="league:${l.id}" ${sel === "league:" + l.id ? "selected" : ""}>League admin · ${esc(l.name)}</option>`).join("") : "")
     + (S.adminTeams || []).filter(t => owner || t.league_id === S.adminLeague).map(t => `<option value="team:${t.id}" ${sel === "team:" + t.id ? "selected" : ""}>Team admin · ${esc(t.name)}${owner && leagues.length > 1 ? " (" + esc(lname(t.league_id)) + ")" : ""}</option>`).join("");
   const delL = S.ui.armed === "league-del-" + lid;
   return `
@@ -1836,7 +1895,7 @@ async function gateAction(a, b) {
     let { data: ses } = await sb.auth.getSession();
     if (!ses?.session) {
       const r = await sb.auth.signInAnonymously();
-      if (r.error) return fail(/anonymous/i.test(errMsg(r.error)) ? "Team sign-in isn't turned on yet. The owner needs to allow anonymous sign-ins in Supabase." : errMsg(r.error));
+      if (r.error) return fail(/anonymous/i.test(errMsg(r.error)) ? "Team sign-in isn't turned on yet. The site admin needs to allow anonymous sign-ins in Supabase." : errMsg(r.error));
     }
     const { data, error } = await sb.rpc("join_team", { p_team: team, p_pin: pin });
     if (error) return fail(errMsg(error));
@@ -1882,7 +1941,7 @@ async function gateAction(a, b) {
     await sb.auth.signOut().catch(() => {});
     const r = await sb.auth.signUp({ email: toEmail(u), password: p });
     if (r.error) return fail(errMsg(r.error));
-    if (!r.data.session) { g.tab = "admin"; return fail("Check your email and tap the confirmation link, then sign in here with the Admin tab. Your owner setup finishes on that first sign-in."); }
+    if (!r.data.session) { g.tab = "admin"; return fail("Check your email and tap the confirmation link, then sign in here with the Admin tab. Your site admin setup finishes on that first sign-in."); }
     const c = await sb.rpc("claim_owner", { p_username: u });
     if (c.error) { await sb.auth.signOut(); return fail(errMsg(c.error)); }
     g.busy = false; S.view.tab = "league"; return afterAuth();
@@ -2677,6 +2736,7 @@ document.addEventListener("click", e => {
     sb.rpc("set_team_pin", { p_team: tid, p_pin: pin }).then(({ error }) => { if (error) return toast(errMsg(error)); if (S.teamId === tid) S.pinDefault = false; S.mgr.data?.defaultPins?.delete(tid); toast("PIN set. Share it with your team."); render(); });
     return;
   }
+  if (a === "site-refresh") { S.site = { ...(S.site || {}), error: null }; loadSiteStats(); return; }
   if (a === "imp-cancel") { S.mgr.imp = null; render(); return; }
   if (a === "imp-claude") { importClaude(); return; }
   if (a === "imp-run") { importRun(); return; }

@@ -17,7 +17,7 @@ Lineups, results, scratches and stats for 8-ball doubles league teams. Built for
 
 | Role | Sign-in | Can do |
 |---|---|---|
-| Owner | Email + password | Everything, in every league: create and delete leagues, appoint league admins |
+| Site admin | Email + password | Everything, in every league: create and delete leagues, appoint league admins |
 | League admin | Email + password | One league: seasons (and which is current), teams in each season, team PINs, rules, team admins |
 | Team admin | Email + password | One team: rosters, team PIN, matches, unlock and delete matches |
 | Team member | League → Team → 4-digit PIN, every session | Their team: build lineups, record results, log scratches, lock matches |
@@ -47,6 +47,7 @@ Admins can tap **Forgot password?** on the sign-in screen to get a reset link by
 - `supabase/migrations/003_leagues_and_seasons.sql` adds leagues and league seasons, keeping all existing teams, rosters, matches and admins (they move into one league called "My League").
 - `supabase/migrations/004_final_lineup.sql` enforces finalized lineups (and auto-finalizes on match lock).
 - `supabase/migrations/005_match_reports.sql` adds the table for Claude-written match reports.
+- `supabase/migrations/008_site_stats.sql` adds the Site tab's stats for site admins.
 - `supabase/migrations/007_schedule_import.sql` adds schedule import (League tab), default-PIN locking for imported teams, team aliases and the league venue.
 - `supabase/migrations/006_league_city.sql` adds a league city (League tab), used for local color and match-day weather in reports.
 
