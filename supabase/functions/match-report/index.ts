@@ -180,6 +180,7 @@ async function recordVisit(req: Request, body: any, asUser: any, url: string, se
   const geo = await geoFor(req);
   const { error: ee } = await admin.from("events").insert({ type: "visit", league_id: team.league_id, team_id: team.id, device_id: device, role, ...geo });
   if (ee) console.error("events", ee);
+  await admin.rpc("stats_tick").then(() => {}, () => {});   // daily summaries + 100-day cleanup (no-op if already run today)
   return json({ ok: true });
 }
 

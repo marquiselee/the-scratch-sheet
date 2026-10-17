@@ -47,7 +47,8 @@ Admins can tap **Forgot password?** on the sign-in screen to get a reset link by
 - `supabase/migrations/003_leagues_and_seasons.sql` adds leagues and league seasons, keeping all existing teams, rosters, matches and admins (they move into one league called "My League").
 - `supabase/migrations/004_final_lineup.sql` enforces finalized lineups (and auto-finalizes on match lock).
 - `supabase/migrations/005_match_reports.sql` adds the table for Claude-written match reports.
-- `supabase/migrations/010_events.sql` records anonymous stat events (sign-ins, visits with US-state/country location, match and report activity) for long-term site stats; kept 24 months.
+- `supabase/migrations/011_stats_rollups.sql` summarizes stats by day/week/month/quarter and deletes device-level rows after 100 days (only summaries are kept); adds the Site tab's Trends.
+- `supabase/migrations/010_events.sql` records anonymous stat events (sign-ins, visits with US-state/country location, match and report activity) for site stats (raw rows kept 100 days, see 011).
 - `supabase/migrations/009_devices.sql` records anonymous device IDs (one row per device, team and day) for unique-device stats.
 - `supabase/migrations/008_site_stats.sql` adds the Site tab's stats for site admins.
 - `supabase/migrations/007_schedule_import.sql` adds schedule import (League tab), default-PIN locking for imported teams, team aliases and the league venue.

@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v67 2026-10-16: Site tab Trends: daily, weekly, monthly, quarterly and yearly with year-over-year change, per league; device-level data kept 100 days, then only summaries (migration 011).
   v66 2026-10-16: Stat events (migration 010): sign-ins, visits with approximate location (US state / country), match and report activity; Site tab shows monthly history and locations.
   v65 2026-10-16: Anonymous device ID; one visit per device, team and day is recorded (migration 009); Site tab shows unique devices.
   v64 2026-10-16: "Owner" is now called Site admin; site admins get a Site tab with stats across all leagues (migration 008).
@@ -257,6 +258,20 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .legend{font-size:12px;color:var(--muted)}
 .tools{display:flex;gap:4px}
 .has-note{color:var(--chalk)}
+.trend-seg{max-width:560px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
+.trend-seg button{font-size:12px;padding-left:2px;padding-right:2px;min-width:0}
+.trend-metrics{display:flex;flex-wrap:wrap;gap:6px}
+.chip-btn{font:600 13px var(--f-body);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:5px 11px;cursor:pointer}
+.chip-btn[aria-pressed="true"]{background:var(--cloth);border-color:var(--cloth);color:#fff}
+.trend-bars{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:3px;align-items:end;height:140px}
+.trend-bar{display:grid;grid-template-rows:1fr auto;height:100%;min-width:0}
+.tb-pair{display:flex;align-items:flex-end;justify-content:center;gap:1px;height:100%}
+.tb-pair span{flex:1;max-width:14px;border-radius:3px 3px 0 0;min-height:1px}
+.tb-now{background:var(--cloth)}.tb-yoy{background:#b9c7be}
+.trend-bar i{font-style:normal;font-size:10px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trend-key{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.trend-key span{display:inline-block;width:10px;height:10px;border-radius:2px}.k-now{background:var(--cloth)}.k-yoy{background:#b9c7be;margin-left:8px}
+.up{color:#1d7a40}.down{color:#8c2a3c}
 .site-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .site-tile{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:2px;min-width:0}
 .site-k{font:700 11px var(--f-mono,ui-monospace,monospace);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
@@ -859,7 +874,7 @@ function touchDevice(teamId) {
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v66";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v67";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -1722,6 +1737,46 @@ async function loadSiteStats() {
   const { data, error } = await sb.rpc("site_stats");
   S.site = { loading: false, data: error ? null : data, error: error ? errMsg(error) : null, at: Date.now() }; render();
 }
+// trends: daily / weekly / monthly / quarterly / yearly, each against the same period a year earlier
+const TREND_P = [["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"], ["quarter", "Quarterly"], ["year", "Yearly"]];
+const TREND_M = [["signins", "Sign-ins"], ["visits", "Visits"], ["devices", "Devices"], ["locked", "Matches locked"], ["scratches", "Errors"], ["reports", "Reports"], ["report_views", "Report views"]];
+async function loadTrends() {
+  const tr = S.trends ||= { period: "month", scope: "all", metric: "signins" };
+  const key = tr.period + "|" + tr.scope; if (tr.loading === key) return;
+  tr.loading = key; render();
+  const { data, error } = await sb.rpc("site_series", { p_period: tr.period, p_scope: tr.scope });
+  if (tr.loading !== key) return;
+  tr.loading = null; tr.key = key; tr.data = error ? null : data; tr.error = error ? errMsg(error) : null; render();
+}
+function viewTrends(site) {
+  const tr = S.trends ||= { period: "month", scope: "all", metric: "signins" };
+  if (tr.key !== tr.period + "|" + tr.scope && !tr.loading && !tr.error) loadTrends();
+  const n = x => x == null ? "—" : Number(x).toLocaleString();
+  const label = iso => { const d = new Date(iso + "T12:00"); if (isNaN(d)) return iso;
+    return tr.period === "day" ? d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+      : tr.period === "week" ? "Wk of " + d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : tr.period === "month" ? d.toLocaleDateString(undefined, { month: "short", year: "numeric" })
+      : tr.period === "quarter" ? `Q${Math.floor(d.getMonth() / 3) + 1} ${d.getFullYear()}` : String(d.getFullYear()); };
+  const chg = (a, b) => a == null || b == null ? "" : b === 0 ? (a > 0 ? `<span class="up">new</span>` : "") : `<span class="${a >= b ? "up" : "down"}">${a >= b ? "+" : "−"}${Math.abs(Math.round(100 * (a - b) / b))}%</span>`;
+  const head = `<div class="row spread"><h3 style="margin:0">Trends</h3>
+      <select data-act="trend-scope" aria-label="League" style="width:auto"><option value="all">All leagues</option>${(site.leagues || []).map(l => `<option value="${l.id}" ${tr.scope === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>
+    <div class="seg trend-seg" role="group" aria-label="Period">${TREND_P.map(([k, l]) => `<button data-act="trend-period" data-v="${k}" aria-pressed="${tr.period === k}">${l}</button>`).join("")}</div>`;
+  if (tr.error) return `<section class="panel">${head}<div class="notes"><div class="e">${esc(/site_series|function/i.test(tr.error) ? "Trends need database update 011. Run supabase/migrations/011_stats_rollups.sql in the Supabase SQL Editor, then reload." : tr.error)}</div></div></section>`;
+  if (!tr.data || tr.key !== tr.period + "|" + tr.scope) return `<section class="panel">${head}<p class="muted" style="margin:0">Loading…</p></section>`;
+  const rows = tr.data.rows || [], m = tr.metric, max = Math.max(1, ...rows.map(r => Math.max(r.now[m] || 0, r.yoy[m] || 0)));
+  const yearView = tr.period === "year";
+  return `<section class="panel">${head}
+    <div class="trend-metrics">${TREND_M.map(([k, l]) => `<button class="chip-btn" data-act="trend-metric" data-v="${k}" aria-pressed="${m === k}">${l}</button>`).join("")}</div>
+    <div class="trend-bars" style="--n:${rows.length}">${rows.map(r => `<div class="trend-bar" title="${esc(label(r.start))}: ${n(r.now[m])} (a year earlier: ${n(r.yoy[m])})">
+      <div class="tb-pair"><span class="tb-yoy" style="height:${Math.round(100 * (r.yoy[m] || 0) / max)}%"></span><span class="tb-now" style="height:${Math.round(100 * (r.now[m] || 0) / max)}%"></span></div>
+      ${rows.length <= 12 ? `<i>${esc(label(r.start).replace(/^Wk of /, ""))}</i>` : ""}</div>`).join("")}</div>
+    <div class="small muted trend-key"><span class="k-now"></span>This period <span class="k-yoy"></span>Same period a year earlier${m === "devices" && yearView ? " · yearly devices show the busiest quarter" : ""}</div>
+    <div class="tbl"><table><thead><tr><th>${TREND_P.find(x => x[0] === tr.period)[1].replace(/ly$/, "").replace("Dai", "Day")}</th>${TREND_M.map(([k, l]) => `<th>${l}</th>`).join("")}</tr></thead><tbody>
+      ${rows.slice().reverse().map(r => `<tr><td>${esc(label(r.start))}</td>${TREND_M.map(([k]) => `<td>${n(r.now[k])}${r.yoy[k] != null && (r.yoy[k] || r.now[k]) ? ` <span class="small">${chg(r.now[k], r.yoy[k])}</span>` : ""}</td>`).join("")}</tr>`).join("")}
+    </tbody></table></div>
+    <p class="small muted" style="margin:0">Percent change compares with the same ${yearView ? "year before" : `${tr.period} a year earlier`}. Device-level records are kept for 100 days; older periods use saved summaries.${tr.data.has_history_since ? ` History since ${new Date(tr.data.has_history_since + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.` : ""}</p>
+  </section>`;
+}
 const locName = x => { let c = x.country; try { c = new Intl.DisplayNames(["en"], { type: "region" }).of(x.country) || x.country; } catch (e) {} return x.country === "US" && x.region ? `${US_STATES[x.region] || x.region}, US` : c; };
 const US_STATES = { AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "Washington DC", FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming", PR: "Puerto Rico" };
 function viewSite() {
@@ -1756,12 +1811,9 @@ function viewSite() {
       ${tile("Active teams", n(a.active_teams_30), "edited a match in 30 days")}
       ${a.failed_pins_7 ? tile("Wrong PINs", n(a.failed_pins_7), "last 7 days") : ""}
     </div>
-    ${weeks.length ? `<div class="site-k" style="margin-top:6px">Matches played per week · last 12 weeks</div>
-    <div class="site-bars">${weeks.map(w => `<div class="site-bar" title="Week of ${esc(w.week)}: ${w.matches} matches, ${w.scratches} errors"><span style="height:${Math.round(100 * w.matches / max)}%"></span><b>${w.matches}</b><i>${esc(w.week.slice(5).replace("-", "/"))}</i></div>`).join("")}</div>
-    ${weeks.some(w => w.devices != null) ? `<div class="site-k" style="margin-top:6px">Unique devices per week</div>
-    <div class="site-bars">${(() => { const dm = Math.max(1, ...weeks.map(w => w.devices || 0)); return weeks.map(w => `<div class="site-bar" title="Week of ${esc(w.week)}: ${w.devices || 0} devices"><span style="height:${Math.round(100 * (w.devices || 0) / dm)}%;background:#2a78b0"></span><b>${w.devices || 0}</b><i>${esc(w.week.slice(5).replace("-", "/"))}</i></div>`).join(""); })()}</div>` : ""}` : ""}
     <p class="small muted" style="margin:0">Unique devices: each browser keeps a random ID (nothing personal) and is counted once per day it opens a team. Clearing browser data, private browsing, or using both Safari and the Home Screen app counts as a new device. Sign-ins include team PIN entries and admin email sign-ins.</p>
   </section>
+  ${viewTrends(d)}
   ${(d.months || []).length ? `<section class="panel"><h3>By month</h3>
     <div class="tbl"><table><thead><tr><th>Month</th><th>Sign-ins</th><th>Visits</th><th>Devices</th><th>Locked</th><th>Errors</th><th>Reports</th></tr></thead><tbody>
       ${(d.months || []).slice().reverse().map(x => `<tr><td>${new Date(x.month + "T12:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}</td><td>${n(x.signins)}</td><td>${n(x.visits)}</td><td>${n(x.devices)}</td><td>${n(x.locked)}</td><td>${n(x.scratches)}</td><td>${n(x.reports)}</td></tr>`).join("")}
@@ -2779,7 +2831,9 @@ document.addEventListener("click", e => {
     sb.rpc("set_team_pin", { p_team: tid, p_pin: pin }).then(({ error }) => { if (error) return toast(errMsg(error)); if (S.teamId === tid) S.pinDefault = false; S.mgr.data?.defaultPins?.delete(tid); toast("PIN set. Share it with your team."); render(); });
     return;
   }
-  if (a === "site-refresh") { S.site = { ...(S.site || {}), error: null }; loadSiteStats(); return; }
+  if (a === "trend-period") { S.trends.period = b.dataset.v; loadTrends(); return; }
+  if (a === "trend-metric") { S.trends.metric = b.dataset.v; render(); return; }
+  if (a === "site-refresh") { if (S.trends) S.trends.key = null; S.site = { ...(S.site || {}), error: null }; loadSiteStats(); return; }
   if (a === "imp-cancel") { S.mgr.imp = null; render(); return; }
   if (a === "imp-claude") { importClaude(); return; }
   if (a === "imp-run") { importRun(); return; }
@@ -2949,6 +3003,7 @@ document.addEventListener("change", e => {
   if (t.id === "gate-league") { S.gate.leagueId = t.value; S.gate.teamId = ""; try { localStorage.setItem("ss-last-league", t.value); } catch (x) {} refreshGateTeams().then(render); return; }
   if (t.id === "mgr-league") { S.mgr.leagueId = t.value; S.mgr.seasonId = null; S.mgr.data = null; render(); return; }
   if (t.id === "imp-file" && t.files?.[0]) { importRead(t.files[0]); t.value = ""; return; }
+  if (t.dataset.act === "trend-scope") { S.trends.scope = t.value; loadTrends(); return; }
   if (t.dataset.act === "imp-choice") { const c = S.mgr.imp?.clusters?.find(x => x.key === t.dataset.key); if (c) { c.choice = t.value; render(); } return; }
   if (S.pinDefault && S.teamId && S.view.tab !== "league" && t.id !== "first-pin" && (t.dataset.field || t.dataset.act)) { toast("Set a new team PIN first."); render(); return; }
   if (t.dataset.field === "table") { editMatch(m => { const v = t.value.trim().slice(0, 30); if (v) m.table = v; else delete m.table; }); return; }
