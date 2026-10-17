@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v68 2026-10-16: Site tab errors name the missing database update.
   v67 2026-10-16: Site tab Trends: daily, weekly, monthly, quarterly and yearly with year-over-year change, per league; device-level data kept 100 days, then only summaries (migration 011).
   v66 2026-10-16: Stat events (migration 010): sign-ins, visits with approximate location (US state / country), match and report activity; Site tab shows monthly history and locations.
   v65 2026-10-16: Anonymous device ID; one visit per device, team and day is recorded (migration 009); Site tab shows unique devices.
@@ -875,7 +876,7 @@ function touchDevice(teamId) {
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v67";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v68";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -1762,7 +1763,7 @@ function viewTrends(site) {
   const head = `<div class="row spread"><h3 style="margin:0">Trends</h3>
       <select data-act="trend-scope" aria-label="League" style="width:auto"><option value="all">All leagues</option>${(site.leagues || []).map(l => `<option value="${l.id}" ${tr.scope === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>
     <div class="seg trend-seg" role="group" aria-label="Period">${TREND_P.map(([k, l]) => `<button data-act="trend-period" data-v="${k}" aria-pressed="${tr.period === k}">${l}</button>`).join("")}</div>`;
-  if (tr.error) return `<section class="panel">${head}<div class="notes"><div class="e">${esc(/site_series|function/i.test(tr.error) ? "Trends need database update 011. Run supabase/migrations/011_stats_rollups.sql in the Supabase SQL Editor, then reload." : tr.error)}</div></div></section>`;
+  if (tr.error) return `<section class="panel">${head}<div class="notes"><div class="e">${esc(missingUpdate(tr.error) || tr.error)}</div></div></section>`;
   if (!tr.data || tr.key !== tr.period + "|" + tr.scope) return `<section class="panel">${head}<p class="muted" style="margin:0">Loading…</p></section>`;
   const rows = tr.data.rows || [], m = tr.metric, max = Math.max(1, ...rows.map(r => Math.max(r.now[m] || 0, r.yoy[m] || 0)));
   const yearView = tr.period === "year";
@@ -1780,10 +1781,18 @@ function viewTrends(site) {
 }
 const locName = x => { let c = x.country; try { c = new Intl.DisplayNames(["en"], { type: "region" }).of(x.country) || x.country; } catch (e) {} return x.country === "US" && x.region ? `${US_STATES[x.region] || x.region}, US` : c; };
 const US_STATES = { AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "Washington DC", FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming", PR: "Puerto Rico" };
+// which database update a "does not exist" error points to
+function missingUpdate(msg) {
+  const m = String(msg || "");
+  const map = [[/match_reports/, "005"], [/is_default|team_pin_is_default|league_default_pins|aliases|venue/, "007"], [/site_stats/, "008"], [/device_activity|touch_device/, "009"], [/\bevents\b|log_event|my_role/, "010"], [/stats_daily|stats_devices|stats_locations|stats_meta|site_series|stats_rollup/, "011"]];
+  if (!/does not exist|could not find|schema cache/i.test(m)) return null;
+  const hit = map.find(([re]) => re.test(m));
+  return hit ? `The database is missing update ${hit[1]}. In Supabase → SQL Editor, run supabase/migrations/${hit[1]}_*.sql, then run every later update again in order (they're safe to re-run), and reload.` : null;
+}
 function viewSite() {
   const st = S.site;
   if (!st || (!st.data && !st.loading && !st.error)) { loadSiteStats(); return `<h2>Site</h2><div class="panel"><p class="muted" style="margin:0">Loading site stats…</p></div>`; }
-  if (st.error) return `<h2>Site</h2><div class="panel"><div class="notes"><div class="e">${esc(/site_stats|function/i.test(st.error) ? "Site stats need database update 008. Run supabase/migrations/008_site_stats.sql in the Supabase SQL Editor, then reload." : st.error)}</div></div><button class="btn w" data-act="site-refresh">Try again</button></div>`;
+  if (st.error) return `<h2>Site</h2><div class="panel"><div class="notes"><div class="e">${esc(missingUpdate(st.error) || st.error)}</div></div><button class="btn w" data-act="site-refresh">Try again</button></div>`;
   if (!st.data) return `<h2>Site</h2><div class="panel"><p class="muted" style="margin:0">Loading site stats…</p></div>`;
   const d = st.data, t = d.totals || {}, a = d.activity || {}, n = x => Number(x || 0).toLocaleString();
   const tile = (k, v, sub) => `<div class="site-tile"><div class="site-k">${k}</div><div class="site-v">${v}</div>${sub ? `<div class="small muted">${sub}</div>` : ""}</div>`;
