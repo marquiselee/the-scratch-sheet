@@ -13,6 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v72 2026-10-16: Phones: bottom tab bar fits six tabs and long admin emails wrap, so pages no longer overflow the screen width.
   v71 2026-10-16: Expanded match rows label their columns Matches and Scratches.
   v70 2026-10-16: Copyright notice; Claude prompts moved out of the code into a private table (migration 013).
   v69 2026-10-16: Site tab: league/team scope picker for all KPIs and trends, per-team table, feature usage, device type/system and Home Screen use (migration 012).
@@ -173,7 +174,9 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 .rep-mark{display:inline-grid;place-items:center}
 .lrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .lrow:first-of-type{border-top:0}
-@media (max-width:640px){.lrow{grid-template-columns:1fr}.lrow .row{justify-content:flex-start}}
+@media (max-width:640px){.lrow{grid-template-columns:minmax(0,1fr)}.lrow .row{justify-content:flex-start}}
+.lrow .em{overflow-wrap:anywhere}
+.lrow select{max-width:100%}
 body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f-body)}
 .wrap{max-width:880px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 header{padding-block:16px 0}
@@ -437,9 +440,10 @@ fieldset.lockable:disabled .seg button[aria-pressed="true"]{opacity:1}
   .brand{align-items:flex-start}
   .brand > .row{width:100%;justify-content:space-between}
   #season-pick{flex:1;width:auto!important}
-  nav{position:fixed;left:0;right:0;bottom:0;z-index:5;margin:0;background:var(--surface);border-top:1px solid var(--line);border-bottom:0;display:grid;grid-template-columns:repeat(var(--n,4),1fr);gap:0;overflow:visible;
+  nav{position:fixed;left:0;right:0;bottom:0;z-index:5;margin:0;background:var(--surface);border-top:1px solid var(--line);border-bottom:0;display:grid;grid-template-columns:repeat(var(--n,4),minmax(0,1fr));gap:0;overflow:visible;
     padding:0 max(4px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0px) max(4px,env(safe-area-inset-left,0px))}
-  nav button{border-bottom:0;border-top:3px solid transparent;padding:12px 2px;font-size:13px;min-height:56px}
+  nav button{border-bottom:0;border-top:3px solid transparent;padding:10px 2px;font-size:13px;min-height:56px;min-width:0;white-space:normal;line-height:1.15;overflow-wrap:anywhere}
+  nav[style*="--n:6"] button,nav[style*="--n:7"] button{font-size:12px}
   nav button[aria-current="true"]{border-top-color:var(--cloth);border-bottom:0}
   nav button.push{margin-left:0}
   main{padding-block:16px calc(96px + env(safe-area-inset-bottom,0px));gap:16px}
@@ -896,7 +900,7 @@ function deviceKind() {
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v71";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v72";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { logEvent("installed", S.teamId); installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
