@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v61 2026-10-16: Phone top bar: smaller buttons, larger logo and name (stacked THE / SCRATCH / SHEET).
   v60 2026-10-16: "+ Home Screen" button on phones (install prompt on Android, steps on iPhone); service worker loads the newest app when online; open apps offer a reload when a new version is live.
   v59 2026-10-16: Expanded match rows: games on the left, sortable scratch table (game, player, type) on the right.
   v58 2026-10-16: Matches list rows expand in place to show the same details as the Next Match card.
@@ -128,7 +129,13 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 #topbar .tb-exit:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 @media (max-width:480px){#topbar .tb-who{display:none}}
 #topbar .tb-install{padding:6px 10px;font-size:13px;background:rgba(255,255,255,.12)}
-@media (max-width:480px){#topbar.has-install .tb-name{font-size:14px;line-height:1.05;white-space:normal;max-width:12ch}}
+@media (max-width:480px){
+  #topbar .tb-right{gap:6px}
+  #topbar .tb-exit{font-size:11.5px;padding:4px 8px;min-height:28px;border-radius:7px}
+  #topbar .tb-id img{width:30px;height:30px}
+  #topbar.has-install .tb-name{font-size:19px;line-height:.95;white-space:normal;max-width:7.5ch}
+  #topbar.has-install .tb-the{display:block;font:500 9px/1.3 var(--f-mono,ui-monospace,monospace);letter-spacing:.32em;color:#9fd0f2}
+}
 .install-steps{margin:0;padding-left:22px;display:grid;gap:8px;font-size:15px}
 .upd{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:30;display:flex;gap:12px;align-items:center;background:#16211b;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:14px;width:max-content;max-width:calc(100% - 24px)}
 .who-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
@@ -809,7 +816,7 @@ async function boot() {
 }
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v60";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v61";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -852,7 +859,7 @@ function render() {
   app.className = "wrap" + (S.canWrite ? "" : " ro");
   if (S.phase === "app") {
     const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`;
-    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg?v=27" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span>${showInstall() ? `<button class="tb-exit tb-install" data-act="install" title="Add The Scratch Sheet to your Home Screen">+ Home Screen</button>` : ""}<button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
+    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg?v=27" alt=""><span class="tb-name"><span class="tb-the">The </span>Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span>${showInstall() ? `<button class="tb-exit tb-install" data-act="install" title="Add The Scratch Sheet to your Home Screen">+ Home Screen</button>` : ""}<button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
     bar.hidden = false; bar.classList.toggle("has-install", showInstall());
   } else { bar.hidden = true; bar.innerHTML = ""; }
   if (S.phase !== "app") {
