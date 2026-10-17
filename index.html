@@ -12,7 +12,8 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
-  v61 2026-10-16: Phone top bar: smaller buttons; logo name stays on one line and scales with the screen.
+  v62 2026-10-16: Phone top bar: name sized from the space actually available (measured after fonts load), larger cube.
+  v61 2026-10-16: Phone top bar: smaller buttons; logo name on one line, sized to fill the space beside the buttons.
   v60 2026-10-16: "+ Home Screen" button on phones (install prompt on Android, steps on iPhone); service worker loads the newest app when online; open apps offer a reload when a new version is live.
   v59 2026-10-16: Expanded match rows: games on the left, sortable scratch table (game, player, type) on the right.
   v58 2026-10-16: Matches list rows expand in place to show the same details as the Next Match card.
@@ -132,10 +133,10 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 @media (max-width:480px){
   #topbar .tb-right{gap:6px}
   #topbar .tb-exit{font-size:11.5px;padding:4px 8px;min-height:28px;border-radius:7px}
-  #topbar .tb-id img{width:30px;height:30px}
+  #topbar .tb-id img{width:34px;height:34px}
   #topbar .tb{padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px));gap:8px}
   #topbar .tb-id{gap:7px;min-width:0}
-  #topbar.has-install .tb-name{white-space:nowrap;font-size:clamp(10px,calc(5.3vw - 6.5px),20px);letter-spacing:.01em}
+  #topbar .tb-name{white-space:nowrap}
   #topbar .tb-exit{font-size:10.5px;padding:4px 6px}
 }
 .install-steps{margin:0;padding-left:22px;display:grid;gap:8px;font-size:15px}
@@ -818,7 +819,7 @@ async function boot() {
 }
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v61";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v62";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -855,6 +856,23 @@ setInterval(checkVersion, 5 * 60e3); setTimeout(checkVersion, 20e3);
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch(() => {});
 
 /* ---------- render ---------- */
+// phones: size the app name to fill the space beside the buttons (whatever font has loaded)
+function fitBrand() {
+  const bar = document.querySelector("#topbar .tb"), n = document.querySelector("#topbar .tb-name");
+  if (!bar || !n) return;
+  n.style.fontSize = "";
+  if (window.innerWidth > 480) return;
+  const right = bar.querySelector(".tb-right"), img = bar.querySelector(".tb-id img"), cs = getComputedStyle(bar), idGap = parseFloat(getComputedStyle(bar.querySelector(".tb-id")).columnGap) || 7;
+  const avail = bar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - (right?.offsetWidth || 0) - (img?.offsetWidth || 0) - idGap - (parseFloat(cs.columnGap) || 8) - 4;
+  n.style.fontSize = "20px";
+  const w = n.scrollWidth || 1;
+  let f = Math.max(10, Math.min(28, 20 * avail / w));
+  n.style.fontSize = f.toFixed(1) + "px";
+  // nudge down until it clears the buttons (flex layout can differ from the estimate)
+  for (let i = 0; i < 60 && f > 10 && (bar.scrollWidth > bar.clientWidth || (right && n.getBoundingClientRect().right > right.getBoundingClientRect().left - 6)); i++) { f -= 0.5; n.style.fontSize = f.toFixed(1) + "px"; }
+}
+window.addEventListener("resize", fitBrand);
+document.fonts?.ready.then(fitBrand);
 function render() {
   const act = document.activeElement, keep = act && act.id ? { id: act.id, val: act.value, s: act.selectionStart, e: act.selectionEnd, text: act.matches("input[type=text],input[type=search],textarea") } : null;
   const app = $("#app"), bar = $("#topbar");
@@ -862,7 +880,7 @@ function render() {
   if (S.phase === "app") {
     const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`;
     bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg?v=27" alt=""><span class="tb-name"><span class="tb-the">The </span>Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span>${showInstall() ? `<button class="tb-exit tb-install" data-act="install" title="Add The Scratch Sheet to your Home Screen">+ Home Screen</button>` : ""}<button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
-    bar.hidden = false; bar.classList.toggle("has-install", showInstall());
+    bar.hidden = false; bar.classList.toggle("has-install", showInstall()); fitBrand();
   } else { bar.hidden = true; bar.innerHTML = ""; }
   if (S.phase !== "app") {
     app.innerHTML = `<header><div class="brand"><div class="brand-id"><img class="logo" src="icons/logo.svg?v=27" width="64" height="64" alt=""><div><div class="eyebrow">8-ball doubles league</div><h1>The Scratch Sheet</h1></div></div></div></header><main>${S.phase === "boot" ? "" : viewGate()}</main>`;
