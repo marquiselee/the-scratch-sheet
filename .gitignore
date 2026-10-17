@@ -1,1 +1,4 @@
-.DS_Store
+# private material that must never be committed
+*PRIVATE*
+ai_prompts*.sql
+!supabase/migrations/013_ai_prompts.sql

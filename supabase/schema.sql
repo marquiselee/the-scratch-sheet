@@ -1486,3 +1486,12 @@ begin
 end $$;
 revoke all on function public.site_stats(text) from public, anon;
 grant execute on function public.site_stats(text) to authenticated;
+
+-- ---------- private Claude prompts table (same as migration 013; contents loaded separately) ----------
+create table if not exists public.ai_prompts (
+  key        text primary key check (key ~ '^[a-z_]{2,40}$'),
+  body       text not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.ai_prompts enable row level security;   -- no policies: not readable or writable from the app
+revoke all on public.ai_prompts from anon, authenticated;

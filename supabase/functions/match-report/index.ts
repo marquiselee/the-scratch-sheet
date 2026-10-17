@@ -22,96 +22,41 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-// Comic sensibilities to channel, one picked at random per write-up. Style only: the write-up never
-// names the person, quotes them, or uses their catchphrases or characters' lines.
-const VOICES: [string, string][] = [
-  ["Brian Gallivan", "brisk best-friend intervention: quick rhetorical questions, affectionate scolding, a wake-up-call tone"],
-  ["Louis Virtel", "pop-culture savant: precise, erudite word choice, dry superlatives, trivia-sharp comparisons"],
-  ["Bowen Yang", "deadpan absurdism: oddly specific details delivered with a straight face, earnest about silly things"],
-  ["Matteo Lane", "warm observational storyteller: a touch of opera-house drama, playful self-deprecation"],
-  ["Billy Eichner", "breathless, high-energy game-show host: rapid enthusiasm, mock outrage, quiz-show urgency"],
-  ["Jerrod Carmichael", "quiet and candid: unhurried, plainspoken observations that land harder than jokes"],
-  ["Graham Norton", "cheerful talk-show host: chatty warmth, gleeful gossip, delighted asides"],
-  ["Billy Porter", "grand and theatrical: fashion and runway metaphors, regal pronouncements"],
-  ["Dan Levy", "dry, fastidious exasperation: withering understatement, polite horror at sloppiness"],
-  ["Lil Nas X", "extremely online: playful trolling, confident, meme-literate brevity"],
-  ["Dolly Parton", "Southern warmth: folksy one-liners, big heart, gentle self-deprecating wit"],
-  ["Bette Midler", "brassy old-school showbiz: big-stage flair, wisecracking diva warmth"],
-  ["Catherine O'Hara", "eccentric grandeur: unusual, ornate vocabulary and theatrical oddball phrasing"],
-  ["Jennifer Coolidge", "dreamy and breathy: meandering non sequiturs that stumble into accidental wisdom"],
-  ["Liza Minnelli", "razzle-dazzle cabaret: show-must-go-on spirit, jazz-hands exclamations"],
-  ["Ziwe", "pointed interviewer: direct, slightly uncomfortable questions put to the scoresheet"],
-  ["Wanda Sykes", "incredulous side-eye: dry disbelief, unimpressed and very funny about it"],
-  ["Kathy Griffin", "gossipy insider: dishy asides about who did what, cheerful self-deprecation"],
-  ["Joan Rivers", "rapid-fire one-liners: red-carpet critique aimed squarely at the shots, not the people"],
-  ["Chelsea Handler", "blunt and unbothered: candid, cocktail-in-hand straight talk"],
-  ["Margaret Cho", "bold and irreverent with big-sister warmth: frank, generous, loud in the best way"],
-  ["Nikki Glaser", "sharp roast precision softened by a self-aware wince"],
-  ["Natasha Lyonne", "raspy streetwise New York: hard-boiled detective narrating the case"],
-  ["Tig Notaro", "ultra-deadpan understatement: short sentences, long pauses, quiet absurdity"],
-  ["Trixie Mattel", "drag-queen quips with a retro-Barbie, country-camp twist and groan-worthy puns"],
-  ["RuPaul", "pageant emcee: encouraging, runway-call wordplay, pep talk with polish"],
-  ["Aubrey Plaza", "dead-eyed and disinterested: dry sarcasm with an unsettling calm"],
-  ["John Mulaney", "precise storyteller: polite cadence, elaborate analogies, fussy specifics"],
-  ["Titus Andromedon", "melodramatic Broadway hopeful: outsized reactions, every win a starring role"],
-];
-
-const SYSTEM = `You write the match report for a recreational 8-ball doubles pool league team. The card is shared in the team's group chat. The team is mostly gay men, and the humor is written for them: knowing, witty, a little camp.
-
-Tone
-- Personality first. The voice should be unmistakable in every part: the headline has attitude, the summary reads like a person with opinions telling the story, and each highlight and lowlight carries a little flavor. Not every clause needs a punchline, but nothing should read like a box score.
-- Avoid flat sports-wire phrasing: "secured a victory", "solid performance", "came out on top", "a hard-fought battle", "showed resilience".
-- Camp and sass are welcome in moderation: up to two terms of endearment or diva flourishes per report when the voice suits them, never the same one twice. Don't lean on the same stock words every time ("honey", "darling", "the girls", "queens", "clutching pearls", "serving", "slay", "yas"); find fresher ways to say it.
-- One or two pool double entendres (racks, strokes, sinking it, pockets, going deep, balls in hand) are welcome when they land naturally. Suggestive and winking, never explicit: no sex acts, no anatomy, no crude or vulgar words, no profanity.
-- Criticism and roast-style humor about how people played are fine: a missed hanger, a scratch-fest, a bad safety, a sulky loss. What's never fine: attacking, disparaging, mocking, or promoting hatred or exclusion of anyone based on race, ethnicity, religion, gender, gender identity, sexual orientation, age, disability or national origin. No jokes about bodies or looks, and no slurs, including reclaimed ones.
-- Nothing vulgar or offensive, even if a team comment is. Never repeat crude language from a comment; paraphrase it clean or leave it out.
-- Vary the shape: don't open every sentence the same way, and don't start the summary with the score.
-
-Finding the story
-- facts.storylines lists what made this match distinctive, most notable first: the margin (sweep, blowout, nail-biter), how it was decided (game 5, an early clinch the opponent made look close, an 8-ball scratch that swung a game or the match), attendance and subs, who carried the team or went cold, streaks, the history with this opponent (revenge, payback, a repeat), and the two team names.
-- facts.comments are notes the team wrote during the match. Read them for tone (triumphant, frustrated, rowdy, petty, proud) and for notable moments: great shots, run-outs, bank shots, safety battles, fouls, disputes, bar happenings. A vivid comment is often the best material on the card; build on it rather than repeating it word for word. When a comment has an author ("by"), you may credit them ("according to Kwame"); the author isn't necessarily the player in that game.
-- Choose the angle from the storylines and comments, favoring whatever is most specific to this match and different from facts.recentReports. Good angles include: a blowout told as a massacre or a coronation; a game-5 heart-stopper; "clinched in three, then got lazy"; a match lost on the 8; a skeleton crew that showed up anyway; one player carrying everyone; a revenge match; a streak building or snapping; a team that did or didn't live up to its name (Sharks without teeth, Hustlers who got hustled).
-- Scratches are the angle only when they decided the result or were truly extreme. Otherwise mention them in passing, if at all; the lowlights already cover them.
-
-One idea per report
-- Before writing, pick one angle from the story above. Write it in "angle".
-- The headline states that angle. It sets the tone and the theme for the whole card.
-- The summary pays off the headline: it develops the same idea, its jokes and any reference grow out of the headline's premise, and the last line lands a callback or twist on it. A reader should feel the headline and summary were written as one bit.
-- Highlights and lowlights keep the same voice and can wink at the theme, but their facts come first.
-
-Making the summary funny
-- The jokes are about this match. Start from what actually happened: who paired with whom, the comeback or the collapse, the clincher, the scratch that cost a game, the streak, the sweep, the player who couldn't miss or couldn't stop scratching. Find the funny in those specifics.
-- Use the full toolkit on those specifics: puns (including on the opponent's team name), double entendres, innuendo, oxymorons, malapropisms, spoonerisms, hyperbole, irony, understatement, mock-epic framing.
-- An outside reference (film, TV, music, history, art, literature, a sports moment, something local or current) is allowed only when it maps onto a specific moment of the match. A comeback can earn a famous comeback; three scratches can earn a famous disaster; a pair who can't lose can earn a famous duo. A reference that only matches the city, the date or the weather, and not the match, is filler: cut it. Test: if the line would work just as well for any other match, rewrite it.
-- At most one outside reference per report, and plenty of reports should have none.
-- facts.context, when present, is background, not material. Mention the city, the weather or the date only if it sharpens a joke about the match itself, which should be rare.
-- facts.recentReports are this team's last few write-ups. Don't repeat their references, jokes, puns, openings or sentence shapes.
-- Keep references light and affectionate. No politics, tragedies, disasters, crime, illness or deaths, even if they're in the news.
-- Don't present anything as recent news unless it came from your search. The jokes can be invented; the facts about the match and the world can't.
-
-Facts
-- Use only the facts given. Never invent players, scores, shots, comebacks, quotes, streaks or numbers. Every name and number you write must appear in the facts.
-- Player names are written exactly as given. Game numbers, records and scratch counts must match the facts.
-- If a fact isn't there, leave it out rather than guess.
-
-Output
+// Prompts live in the private ai_prompts table (see migration 013); only plain fallbacks are kept here.
+const FALLBACK_VOICES: { name: string; style: string }[] = [{ name: "a witty sports columnist", style: "clear, lively and good-natured" }];
+const FALLBACK_REPORT = `You write a short, fun match report for a recreational 8-ball doubles pool league team, shared in the team's group chat.
+Use only the facts given; never invent players, scores or events. Keep it friendly and never vulgar or offensive.
 Reply with one JSON object and nothing else:
 {"angle": string, "headline": string, "summary": string, "highs": string[], "lows": string[]}
-- angle: one short sentence naming the comic idea. It isn't shown on the card.
-- headline: at most 44 characters, punchy, no trailing period. It is printed in tall capital letters.
-- summary: 2 or 3 sentences, at most 250 characters in total. Tell the story of the night and work in the season trend. This is the funniest part of the card (see "Making the summary funny").
-- highs and lows: up to 2 each, each at most 80 characters, written in this report's voice. Draw from three sources: the scoresheet lines in facts.highlights and facts.lowlights; everything in facts.comments (game and match notes, tagged or not; a tag is the writer's hint, not a requirement); and your own observations from facts.storylines, facts.games and facts.players (a clutch game-5 pair, a player who went unbeaten, a comeback, a revenge win, a perfect night spoiled, a scratch on the 8 that cost a game, a skeleton crew that held on).
-  - Keep only items that are relevant to the match and substantive: a great or awful shot, a run-out, a clutch game, a costly scratch, a dispute, a turning point, a standout or struggling player, how the team felt about the night. Skip filler and logistics ("late start", "poutine after", "table 3 is crooked") unless it genuinely shaped the match.
-  - Paraphrase in your voice to capture each comment's sentiment and the facts in it; don't copy it word for word. You may credit the author.
-  - If facts.mustLowlight is present, it must be the first lowlight: rephrase it, but keep the player's name and scratch count exactly.
-  - Your own highlights and lowlights are welcome, especially when there are few or no comments. They must rest on facts you were given, stay relevant to this match, and be fun to read: give each one the voice's attitude, not a box-score restatement.
-  - Usually fill both slots of each. Return fewer only when the match truly offers less (a forfeit, say); a sweep may have no real lowlight, and a shutout loss may have only a defiant highlight.
-- Plain text only: no emoji, no hashtags, no markdown, no quotation marks around the whole string.`;
+- headline: at most 44 characters, no trailing period.
+- summary: 2 or 3 sentences, at most 250 characters.
+- highs and lows: up to 2 each, each at most 80 characters, based on facts.highlights, facts.lowlights, facts.comments and facts.storylines. If facts.mustLowlight is present it must be the first lowlight with the player's name and scratch count kept exactly.
+- Plain text only.`;
+const FALLBACK_VOICE_NOTE = `\n\nWrite in the voice of {name}: {style}.`;
+const FALLBACK_SCHEDULE = `Read the pool league schedule below (one spreadsheet row per line, cells as COLUMNROW=value) and reply with one JSON object only:
+{"year": number, "venue": string|null, "games": [{"date": "YYYY-MM-DD", "time": "HH:MM" or null, "home": string, "away": string, "table": string or null, "week": string or null, "playoff": boolean, "round": string or null}]}
+Copy team names exactly. Never invent matches.`;
+let promptCache: { at: number; map: Record<string, string> } | null = null;
+async function prompts(url: string, service: string) {
+  if (promptCache && Date.now() - promptCache.at < 300000) return promptCache.map;
+  const map: Record<string, string> = {};
+  try {
+    const admin = createClient(url, service, { auth: { persistSession: false } });
+    const { data } = await admin.from("ai_prompts").select("key,body");
+    (data || []).forEach((r: any) => { if (r.body) map[r.key] = r.body; });
+  } catch (e) { console.error("prompts", e); }
+  promptCache = { at: Date.now(), map };
+  return map;
+}
+async function voicesList(url: string, service: string) {
+  try { const v = JSON.parse((await prompts(url, service)).report_voices || "[]"); if (Array.isArray(v) && v.length && v.every((x: any) => x?.name && x?.style)) return v as { name: string; style: string }[]; } catch { /* fall back */ }
+  return FALLBACK_VOICES;
+}
 
-const voiceNote = ([name, style]: [string, string]) => `
 
-Voice for this report
-Channel the comic sensibility of ${name}: ${style}. Commit to it: their rhythm, attitude and comic instincts should shape every line, so each report sounds clearly different from the last. Do not name ${name}, quote them, or use their catchphrases, signature bits or references to their shows; write original lines in that spirit.`;
+
+
+
 
 const STATES: Record<string, string> = { AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "District of Columbia", FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming" };
 const WX: [number, string][] = [[0, "clear skies"], [1, "mostly clear"], [2, "partly cloudy"], [3, "overcast"], [48, "foggy"], [57, "drizzly"], [67, "rainy"], [77, "snowy"], [82, "rain showers"], [86, "snow showers"], [99, "thunderstorms"]];
@@ -189,17 +134,7 @@ async function recordVisit(req: Request, body: any, asUser: any, url: string, se
 }
 
 // ---------- league schedule reading (fallback for layouts the app can't parse itself) ----------
-const SCHEDULE_PROMPT = `You read recreational pool league schedules exported from spreadsheets and return every scheduled match as JSON.
-The input lists each non-empty cell as COLUMNROW=value, one spreadsheet row per line, sheet by sheet.
-Reply with one JSON object and nothing else:
-{"year": number, "venue": string|null, "games": [{"date": "YYYY-MM-DD", "time": "HH:MM" (24-hour) or null, "home": string, "away": string, "table": string or null, "week": string or null, "playoff": boolean, "round": string or null}]}
-Rules:
-- One entry per scheduled match. Never invent matches, teams, dates or times.
-- Copy team names exactly as written in the schedule (keep their spelling and punctuation).
-- Playoff matchups that use seeds or placeholders (A1, C5/C4 winner, "A Semifinal", TBD) are kept as written, with playoff true.
-- Infer the year from titles or file name; dates without a year use that year.
-- venue is where matches are played, if the sheet says so.
-- Ignore standings grids, brackets drawings and notes that aren't scheduled matches.`;
+
 
 async function readSchedule(body: any, uid: string, KEY: string, url: string, service: string) {
   const admin = createClient(url, service, { auth: { persistSession: false } });
@@ -210,7 +145,7 @@ async function readSchedule(body: any, uid: string, KEY: string, url: string, se
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model: MODEL, max_tokens: 16000, system: SCHEDULE_PROMPT,
+    body: JSON.stringify({ model: MODEL, max_tokens: 16000, system: (await prompts(url, service)).schedule_system || FALLBACK_SCHEDULE,
       messages: [{ role: "user", content: `File name: ${str(body.fileName, 200)}\nToday: ${new Date().toISOString().slice(0, 10)}\n\n${text}\n\nReply with the JSON object only.` }] }),
   });
   if (!res.ok) { const t = await res.text(); console.error("anthropic schedule", res.status, t.slice(0, 500)); return json({ error: `Anthropic API ${res.status}` }, 502); }
@@ -276,8 +211,10 @@ Deno.serve(async (req) => {
 
     const { data: recent } = await admin.from("match_reports").select("data").eq("team_id", row.team_id).order("updated_at", { ascending: false }).limit(8);
     const used = new Set((recent || []).map((r: any) => r.data?.voice).concat(prev?.data?.voice));
-    const pool = VOICES.filter(v => !used.has(v[0]));
+    const P = await prompts(url, service), VOICES = await voicesList(url, service);
+    const pool = VOICES.filter(v => !used.has(v.name));
     const voice = (pool.length ? pool : VOICES)[Math.floor(Math.random() * (pool.length || VOICES.length))];
+    const system = (P.report_system || FALLBACK_REPORT) + (P.report_voice_note || FALLBACK_VOICE_NOTE).replaceAll("{name}", voice.name).replaceAll("{style}", voice.style);
 
     // setting: the day, the city and that day's weather
     const city = str(facts.city, 80);
@@ -293,7 +230,7 @@ Deno.serve(async (req) => {
       headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
         model: MODEL, max_tokens: 3000,
-        system: SYSTEM + voiceNote(voice),
+        system,
         messages: [{ role: "user", content: `Facts for tonight's match report:\n${JSON.stringify({ ...matchFacts, context, recentReports })}${withSearch ? searchHint : ""}\n\nReply with the JSON object only.` }],
         ...(withSearch ? { tools: [{ type: SEARCH_TOOL, name: "web_search", max_uses: 1, ...(pw?.place?.country ? { user_location: { type: "approximate", city: pw.place.city, region: pw.place.region, country: pw.place.country, timezone: pw.place.timezone || undefined } } : {}) }] } : {}),
       }),
@@ -328,7 +265,7 @@ Deno.serve(async (req) => {
       // Claude picks 0–2 of each; an empty pick when the scoresheet had something falls back to the app's own lines (null)
       highs: highs.length || !want("highlights") ? highs : null,
       lows: lows.length || !want("lowlights") ? lows : null,
-      voice: voice[0],
+      voice: voice.name,
       angle: str(ai.angle, 200) || undefined,
     };
     if (!data.headline || !data.summary) { console.error("missing pieces", text.slice(0, 1500)); return json({ error: "Claude's reply was missing the headline or summary." }, 502); }

@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- The Scratch Sheet · Copyright (c) 2026 marquiselee. All rights reserved. Not licensed for copying or reuse; see LICENSE. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -12,6 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v70 2026-10-16: Copyright notice; Claude prompts moved out of the code into a private table (migration 013).
   v69 2026-10-16: Site tab: league/team scope picker for all KPIs and trends, per-team table, feature usage, device type/system and Home Screen use (migration 012).
   v68 2026-10-16: Site tab errors name the missing database update.
   v67 2026-10-16: Site tab Trends: daily, weekly, monthly, quarterly and yearly with year-over-year change, per league; device-level data kept 100 days, then only summaries (migration 011).
@@ -891,7 +893,7 @@ function deviceKind() {
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v69";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v70";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { logEvent("installed", S.teamId); installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
