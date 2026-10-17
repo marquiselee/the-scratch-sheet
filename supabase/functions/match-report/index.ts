@@ -178,7 +178,11 @@ async function recordVisit(req: Request, body: any, asUser: any, url: string, se
   if (de && de.code !== "23505") console.error("device_activity", de);
   if (de?.code === "23505") return json({ ok: true, repeat: true });   // already counted today
   const geo = await geoFor(req);
-  const { error: ee } = await admin.from("events").insert({ type: "visit", league_id: team.league_id, team_id: team.id, device_id: device, role, ...geo });
+  const meta: Record<string, unknown> = {};
+  if (["mobile", "tablet", "desktop"].includes(body.platform)) meta.platform = body.platform;
+  if (/^(iOS|Android|Mac|Windows|Linux|ChromeOS|Other)$/.test(body.os || "")) meta.os = body.os;
+  if (typeof body.standalone === "boolean") meta.standalone = body.standalone;
+  const { error: ee } = await admin.from("events").insert({ type: "visit", league_id: team.league_id, team_id: team.id, device_id: device, role, meta, ...geo });
   if (ee) console.error("events", ee);
   await admin.rpc("stats_tick").then(() => {}, () => {});   // daily summaries + 100-day cleanup (no-op if already run today)
   return json({ ok: true });

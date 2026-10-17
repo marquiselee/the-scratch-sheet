@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v69 2026-10-16: Site tab: league/team scope picker for all KPIs and trends, per-team table, feature usage, device type/system and Home Screen use (migration 012).
   v68 2026-10-16: Site tab errors name the missing database update.
   v67 2026-10-16: Site tab Trends: daily, weekly, monthly, quarterly and yearly with year-over-year change, per league; device-level data kept 100 days, then only summaries (migration 011).
   v66 2026-10-16: Stat events (migration 010): sign-ins, visits with approximate location (US state / country), match and report activity; Site tab shows monthly history and locations.
@@ -274,6 +275,13 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .trend-key{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .trend-key span{display:inline-block;width:10px;height:10px;border-radius:2px}.k-now{background:var(--cloth)}.k-yoy{background:#b9c7be;margin-left:8px}
 .up{color:#1d7a40}.down{color:#8c2a3c}
+.site-scope{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.pct-bar{display:inline-block;width:60px;height:8px;border-radius:4px;background:var(--line);margin-right:8px;vertical-align:middle;overflow:hidden}
+.pct-bar span{display:block;height:100%;background:var(--cloth)}
+.plat-row{display:grid;grid-template-columns:90px 1fr auto 40px;gap:10px;align-items:center;font-size:14px}
+.plat-row .pct-bar{width:100%;margin:0}
+.linkish{all:unset;cursor:pointer;font-weight:600;text-decoration:underline;text-decoration-color:var(--line);text-underline-offset:3px}
+tr.sel td{background:var(--bg)}
 .site-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .site-tile{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:2px;min-width:0}
 .site-k{font:700 11px var(--f-mono,ui-monospace,monospace);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
@@ -868,18 +876,25 @@ function touchDevice(teamId) {
   const k = "ss-dev-" + teamId, today = todayISO();
   try { if (localStorage.getItem(k) === today) return; } catch (e) { return; }
   const done = () => { try { localStorage.setItem(k, today); } catch (e) {} };
-  sb.functions.invoke("match-report", { body: { action: "visit", device: id, team: teamId } })
+  sb.functions.invoke("match-report", { body: { action: "visit", device: id, team: teamId, ...deviceKind() } })
     .then(({ data }) => { if (data?.ok) return done(); return sb.rpc("touch_device", { p_device: id, p_team: teamId }).then(({ error }) => { if (!error) done(); }); })
     .catch(() => {});
+}
+// what kind of device this is (sent with daily visits; nothing identifying)
+function deviceKind() {
+  const ua = navigator.userAgent || "", ios = isIOS(), android = /android/i.test(ua);
+  const platform = ios ? (/iphone|ipod/i.test(ua) ? "mobile" : "tablet") : android ? (/mobile/i.test(ua) ? "mobile" : "tablet") : /mobile/i.test(ua) ? "mobile" : "desktop";
+  const os = ios ? "iOS" : android ? "Android" : /CrOS/.test(ua) ? "ChromeOS" : /Macintosh|Mac OS X/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "Other";
+  return { platform, os, standalone: isStandalone() };
 }
 // app-reported stat events (views, saves, admin sign-ins, imports); best effort
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v68";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v69";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
-window.addEventListener("appinstalled", () => { installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
+window.addEventListener("appinstalled", () => { logEvent("installed", S.teamId); installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
 const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const isMobileDevice = () => isIOS() || /android|mobile/i.test(navigator.userAgent);
@@ -1735,13 +1750,17 @@ function viewPinGate() {
 // ---------- site admin: stats across every league ----------
 async function loadSiteStats() {
   if (S.site?.loading) return;
+  const scope = S.siteScope || "all";
   S.site = { ...(S.site || {}), loading: true }; render();
-  const { data, error } = await sb.rpc("site_stats");
-  S.site = { loading: false, data: error ? null : data, error: error ? errMsg(error) : null, at: Date.now() }; render();
+  let { data, error } = await sb.rpc("site_stats", { p_scope: scope });
+  if (error && scope === "all" && /p_scope|function/i.test(errMsg(error))) ({ data, error } = await sb.rpc("site_stats"));   // before migration 012
+  S.site = { loading: false, data: error ? null : data, error: error ? errMsg(error) : null, at: Date.now(), scope }; render();
 }
+function setSiteScope(v) { S.siteScope = v || "all"; S.site = null; if (S.trends) { S.trends.scope = S.siteScope; S.trends.key = null; } render(); }
 // trends: daily / weekly / monthly / quarterly / yearly, each against the same period a year earlier
 const TREND_P = [["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"], ["quarter", "Quarterly"], ["year", "Yearly"]];
-const TREND_M = [["signins", "Sign-ins"], ["visits", "Visits"], ["devices", "Devices"], ["locked", "Matches locked"], ["scratches", "Errors"], ["reports", "Reports"], ["report_views", "Report views"]];
+const TREND_M = [["signins", "Sign-ins"], ["visits", "Visits"], ["devices", "Devices"], ["locked", "Matches locked"], ["scratches", "Errors"], ["reports", "Reports"], ["report_views", "Report views"], ["stats_tab", "Stats tab"], ["home_visits", "Home Screen visits"], ["mobile_visits", "Phone visits"], ["desktop_visits", "Computer visits"]];
+const siteScopeName = () => { const sc = S.siteScope || "all"; if (sc === "all") return "All leagues"; if (sc.startsWith("t:")) return (S.adminTeams || []).find(t => "t:" + t.id === sc)?.name || "Team"; return (S.siteLeagues || []).find(l => l.id === sc)?.name || "League"; };
 async function loadTrends() {
   const tr = S.trends ||= { period: "month", scope: "all", metric: "signins" };
   const key = tr.period + "|" + tr.scope; if (tr.loading === key) return;
@@ -1751,7 +1770,8 @@ async function loadTrends() {
   tr.loading = null; tr.key = key; tr.data = error ? null : data; tr.error = error ? errMsg(error) : null; render();
 }
 function viewTrends(site) {
-  const tr = S.trends ||= { period: "month", scope: "all", metric: "signins" };
+  const tr = S.trends ||= { period: "month", scope: S.siteScope || "all", metric: "signins" };
+  tr.scope = S.siteScope || "all";
   if (tr.key !== tr.period + "|" + tr.scope && !tr.loading && !tr.error) loadTrends();
   const n = x => x == null ? "—" : Number(x).toLocaleString();
   const label = iso => { const d = new Date(iso + "T12:00"); if (isNaN(d)) return iso;
@@ -1761,7 +1781,7 @@ function viewTrends(site) {
       : tr.period === "quarter" ? `Q${Math.floor(d.getMonth() / 3) + 1} ${d.getFullYear()}` : String(d.getFullYear()); };
   const chg = (a, b) => a == null || b == null ? "" : b === 0 ? (a > 0 ? `<span class="up">new</span>` : "") : `<span class="${a >= b ? "up" : "down"}">${a >= b ? "+" : "−"}${Math.abs(Math.round(100 * (a - b) / b))}%</span>`;
   const head = `<div class="row spread"><h3 style="margin:0">Trends</h3>
-      <select data-act="trend-scope" aria-label="League" style="width:auto"><option value="all">All leagues</option>${(site.leagues || []).map(l => `<option value="${l.id}" ${tr.scope === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></div>
+      <span class="small muted">${esc(siteScopeName())}</span></div>
     <div class="seg trend-seg" role="group" aria-label="Period">${TREND_P.map(([k, l]) => `<button data-act="trend-period" data-v="${k}" aria-pressed="${tr.period === k}">${l}</button>`).join("")}</div>`;
   if (tr.error) return `<section class="panel">${head}<div class="notes"><div class="e">${esc(missingUpdate(tr.error) || tr.error)}</div></div></section>`;
   if (!tr.data || tr.key !== tr.period + "|" + tr.scope) return `<section class="panel">${head}<p class="muted" style="margin:0">Loading…</p></section>`;
@@ -1779,6 +1799,54 @@ function viewTrends(site) {
     <p class="small muted" style="margin:0">Percent change compares with the same ${yearView ? "year before" : `${tr.period} a year earlier`}. Device-level records are kept for 100 days; older periods use saved summaries.${tr.data.has_history_since ? ` History since ${new Date(tr.data.has_history_since + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.` : ""}</p>
   </section>`;
 }
+function siteScopePicker(d) {
+  const sc = S.siteScope || "all", leagues = S.siteLeagues ||= (d.leagues || []).map(l => ({ id: l.id, name: l.name }));
+  if (d.leagues) S.siteLeagues = d.leagues.map(l => ({ id: l.id, name: l.name }));
+  const lgId = sc.startsWith("t:") ? (S.siteTeamLeague || "") : sc === "all" ? "" : sc;
+  const teams = (S.adminTeams || []).filter(t => t.league_id === lgId);
+  return `<div class="site-scope">
+    <label class="f">League<select data-act="site-league" aria-label="League"><option value="all">All leagues</option>${(S.siteLeagues || []).map(l => `<option value="${l.id}" ${lgId === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("")}</select></label>
+    ${lgId ? `<label class="f">Team<select data-act="site-team" aria-label="Team"><option value="">All teams in league</option>${teams.map(t => `<option value="t:${t.id}" ${sc === "t:" + t.id ? "selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>` : ""}
+  </div>`;
+}
+const FEATURE_NAMES = { report_view: "Match report opened", report_details: "Report details card (swiped)", report_save: "Report image saved", notes_view: "Game / match notes opened",
+  tab_matches: "Matches tab", tab_standings: "Stats tab", tab_admin: "Team admin tab", tab_league: "League tab", tab_rules: "Rules tab", tab_site: "Site tab",
+  install_click: "+ Home Screen tapped", installed: "Installed (Android prompt)", schedule_import: "Schedule imported" };
+function viewFeatures(d) {
+  const f = d.features; if (!f) return "";
+  const n = x => Number(x || 0).toLocaleString(), act = f.active_devices || 0;
+  const rows = (f.list || []).map(x => ({ ...x, name: FEATURE_NAMES[x.key] || x.key.replace(/^tab_/, "").replace(/_/g, " ") + (x.key.startsWith("tab_") ? " tab" : "") }));
+  return `<section class="panel"><h3>Features <span class="muted small">last 30 days</span></h3>
+    ${rows.length ? `<div class="tbl"><table><thead><tr><th>Feature</th><th>Devices</th><th>% of active</th><th>Uses</th></tr></thead><tbody>
+      ${rows.map(x => `<tr><td>${esc(x.name)}</td><td>${n(x.devices)}</td><td><span class="pct-bar"><span style="width:${act ? Math.min(100, Math.round(100 * x.devices / act)) : 0}%"></span></span>${act ? Math.round(100 * x.devices / act) + "%" : "—"}</td><td>${n(x.uses)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<p class="small muted" style="margin:0">No feature use recorded yet.</p>`}
+    <p class="small muted" style="margin:0">${n(act)} active devices · ${n(f.scratches_logged)} scratches logged · ${n(f.matches_locked)} matches locked. A tab counts when someone switches to it; opening the app on Matches isn't a tab view.</p>
+  </section>`;
+}
+function viewPlatform(d) {
+  const p = d.platform; if (!p) return "";
+  const n = x => Number(x || 0).toLocaleString(), tot = p.visit_devices || 0;
+  const bar = (label, v) => `<div class="plat-row"><span>${esc(label)}</span><span class="pct-bar"><span style="width:${tot ? Math.round(100 * v / tot) : 0}%"></span></span><b>${n(v)}</b><span class="muted">${tot ? Math.round(100 * v / tot) + "%" : ""}</span></div>`;
+  const kinds = [["Phone", p.kinds?.mobile], ["Tablet", p.kinds?.tablet], ["Computer", p.kinds?.desktop], ["Unknown", p.kinds?.unknown]].filter(x => x[1]);
+  const systems = Object.entries(p.systems || {}).sort((a, b) => b[1] - a[1]);
+  return `<section class="panel"><h3>Devices &amp; Home Screen <span class="muted small">last 30 days</span></h3>
+    <div class="site-grid">
+      <div class="site-tile"><div class="site-k">On the Home Screen</div><div class="site-v">${n(p.home_devices)}</div><div class="small muted">${tot ? Math.round(100 * p.home_devices / tot) + "% of devices · " : ""}${n(p.home_devices_all)} in the last 100 days</div></div>
+      <div class="site-tile"><div class="site-k">Android installs</div><div class="site-v">${n(p.installs_30)}</div><div class="small muted">via the install prompt</div></div>
+    </div>
+    ${kinds.length ? `<div class="site-k">Device type</div>${kinds.map(([l, v]) => bar(l, v)).join("")}` : `<p class="small muted" style="margin:0">No visits with device info yet.</p>`}
+    ${systems.length ? `<div class="site-k">System</div>${systems.map(([l, v]) => bar(l, v)).join("")}` : ""}
+    <p class="small muted" style="margin:0">Counts devices that opened a team. "On the Home Screen" means the app was opened from a Home Screen icon (iPhone and Android), which is the reliable way to count installs on iPhones.</p>
+  </section>`;
+}
+function viewTeamsKpi(d) {
+  if (!d.teams) return "";
+  const n = x => Number(x || 0).toLocaleString(), ago = iso => { if (!iso) return "—"; const m = (Date.now() - Date.parse(iso)) / 60000; return m < 60 ? `${Math.max(1, Math.round(m))} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+  return `<section class="panel"><h3>Teams <span class="muted small">${d.teams.length}</span></h3>
+    <div class="tbl"><table><thead><tr><th>Team</th><th>Players</th><th>Played</th><th>Locked</th><th>Errors</th><th>EPG</th><th>Reports</th><th>Report views<span class="muted"> 30d</span></th><th>Sign-ins<span class="muted"> 30d</span></th><th>Devices<span class="muted"> 30d</span></th><th>Last activity</th></tr></thead><tbody>
+      ${d.teams.map(t => `<tr${S.siteScope === "t:" + t.id ? ' class="sel"' : ""}><td><button class="linkish" data-act="site-team-pick" data-id="${t.id}">${esc(t.name)}</button>${t.default_pin ? ` <span class="tag" style="color:var(--warn)">PIN 0000</span>` : ""}</td><td>${n(t.players)}</td><td>${n(t.played)}<span class="muted"> / ${n(t.matches)}</span></td><td>${n(t.locked)}</td><td>${n(t.scratches)}</td><td>${t.games ? (t.scratches / t.games).toFixed(2) : "—"}</td><td>${n(t.reports)}</td><td>${n(t.report_views_30)}</td><td>${n(t.signins_30)}</td><td>${n(t.devices_30)}</td><td>${ago(t.last_activity)}</td></tr>`).join("")}
+    </tbody></table></div></section>`;
+}
 const locName = x => { let c = x.country; try { c = new Intl.DisplayNames(["en"], { type: "region" }).of(x.country) || x.country; } catch (e) {} return x.country === "US" && x.region ? `${US_STATES[x.region] || x.region}, US` : c; };
 const US_STATES = { AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "Washington DC", FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming", PR: "Puerto Rico" };
 // which database update a "does not exist" error points to
@@ -1791,7 +1859,7 @@ function missingUpdate(msg) {
 }
 function viewSite() {
   const st = S.site;
-  if (!st || (!st.data && !st.loading && !st.error)) { loadSiteStats(); return `<h2>Site</h2><div class="panel"><p class="muted" style="margin:0">Loading site stats…</p></div>`; }
+  if (!st || (!st.data && !st.loading && !st.error) || (st.scope && st.scope !== (S.siteScope || "all") && !st.loading)) { loadSiteStats(); return `<h2>Site</h2><div class="panel"><p class="muted" style="margin:0">Loading site stats…</p></div>`; }
   if (st.error) return `<h2>Site</h2><div class="panel"><div class="notes"><div class="e">${esc(missingUpdate(st.error) || st.error)}</div></div><button class="btn w" data-act="site-refresh">Try again</button></div>`;
   if (!st.data) return `<h2>Site</h2><div class="panel"><p class="muted" style="margin:0">Loading site stats…</p></div>`;
   const d = st.data, t = d.totals || {}, a = d.activity || {}, n = x => Number(x || 0).toLocaleString();
@@ -1801,7 +1869,8 @@ function viewSite() {
   const cost = (t.ai_writeups || 0) * 0.0006;
   return `
   <div class="row spread"><h2>Site</h2><span class="row"><span class="small muted">Updated ${ago(d.generated_at)}</span><button class="btn small" data-act="site-refresh" ${st.loading ? "disabled" : ""}>${st.loading ? "Refreshing…" : "Refresh"}</button></span></div>
-  <section class="panel"><h3>Across all leagues</h3>
+  ${siteScopePicker(d)}
+  <section class="panel"><h3>${(S.siteScope || "all") === "all" ? "Across all leagues" : esc(siteScopeName())}</h3>
     <div class="site-grid">
       ${tile("Leagues", n(t.leagues), `${n(t.seasons)} season${t.seasons === 1 ? "" : "s"}`)}
       ${tile("Teams", n(t.teams), t.teams_default_pin ? `${n(t.teams_default_pin)} still on PIN 0000` : "")}
@@ -1824,6 +1893,9 @@ function viewSite() {
     <p class="small muted" style="margin:0">Unique devices: each browser keeps a random ID (nothing personal) and is counted once per day it opens a team. Clearing browser data, private browsing, or using both Safari and the Home Screen app counts as a new device. Sign-ins include team PIN entries and admin email sign-ins.</p>
   </section>
   ${viewTrends(d)}
+  ${viewFeatures(d)}
+  ${viewPlatform(d)}
+  ${viewTeamsKpi(d)}
   ${(d.months || []).length ? `<section class="panel"><h3>By month</h3>
     <div class="tbl"><table><thead><tr><th>Month</th><th>Sign-ins</th><th>Visits</th><th>Devices</th><th>Locked</th><th>Errors</th><th>Reports</th></tr></thead><tbody>
       ${(d.months || []).slice().reverse().map(x => `<tr><td>${new Date(x.month + "T12:00").toLocaleDateString(undefined, { month: "short", year: "numeric" })}</td><td>${n(x.signins)}</td><td>${n(x.visits)}</td><td>${n(x.devices)}</td><td>${n(x.locked)}</td><td>${n(x.scratches)}</td><td>${n(x.reports)}</td></tr>`).join("")}
@@ -1836,11 +1908,11 @@ function viewSite() {
     </tbody></table></div>` : `<p class="small muted" style="margin:0">No visits with a location yet.</p>`}
     <p class="small muted" style="margin:0">Approximate, from the network: the state for US visitors, the country elsewhere. IP addresses aren't stored. VPNs and iCloud Private Relay can show a different place.</p>
   </section>` : ""}
-  <section class="panel"><h3>Leagues</h3>
+  ${d.leagues ? `<section class="panel"><h3>Leagues</h3>
     <div class="tbl"><table><thead><tr><th>League</th><th>Season</th><th>Teams</th><th>Players</th><th>Played</th><th>Locked</th><th>Errors</th><th>Reports</th><th>Sign-ins<span class="muted"> 30d</span></th><th>Devices<span class="muted"> 30d</span></th><th>Last activity</th></tr></thead><tbody>
       ${(d.leagues || []).map(l => `<tr><td><b>${esc(l.name)}</b>${l.city ? `<div class="small muted">${esc(l.city)}</div>` : ""}</td><td>${esc(l.season || "—")}</td><td>${n(l.teams)}</td><td>${n(l.players)}</td><td>${n(l.played)}<span class="muted"> / ${n(l.matches)}</span></td><td>${n(l.locked)}</td><td>${n(l.scratches)}</td><td>${n(l.reports)}</td><td>${l.signins_30 != null ? n(l.signins_30) : "—"}</td><td>${l.devices_30 != null ? n(l.devices_30) : "—"}</td><td>${ago(l.last_activity)}</td></tr>`).join("") || `<tr><td colspan="11" class="muted">No leagues yet.</td></tr>`}
     </tbody></table></div>
-  </section>`;
+  </section>` : ""}`;
 }
 function viewAccount() {
   return `<section class="panel">
@@ -2584,7 +2656,7 @@ function renderReport() {
   fitCard(box.querySelector(".rp-fit2"), id, 1);
   const tr = box.querySelector(".rp-track");
   tr.scrollLeft = pg * tr.clientWidth;
-  tr.onscroll = () => { const p = Math.round(tr.scrollLeft / Math.max(1, tr.clientWidth)); if (p !== (S.ui.reportPage || 0)) { S.ui.reportPage = p; box.querySelectorAll(".rp-dots button").forEach((b, i) => b.setAttribute("aria-selected", String(i === p))); const t = box.querySelector(".rp-dots span"); if (t) t.innerHTML = p ? "Errors &amp; notes" : "Swipe for errors &amp; notes"; } };
+  tr.onscroll = () => { const p = Math.round(tr.scrollLeft / Math.max(1, tr.clientWidth)); if (p !== (S.ui.reportPage || 0)) { S.ui.reportPage = p; if (p === 1 && S.ui.detailsLogged !== S.ui.report) { S.ui.detailsLogged = S.ui.report; logEvent("report_details", S.teamId, { match: S.ui.report }); } box.querySelectorAll(".rp-dots button").forEach((b, i) => b.setAttribute("aria-selected", String(i === p))); const t = box.querySelector(".rp-dots span"); if (t) t.innerHTML = p ? "Errors &amp; notes" : "Swipe for errors &amp; notes"; } };
 }
 async function saveReportImage() {
   const id = S.ui.report; if (!id) return;
@@ -2828,7 +2900,7 @@ document.addEventListener("click", e => {
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
   if (a === "app-reload") { location.reload(); return; }
-  if (a === "install") {
+  if (a === "install") { logEvent("install_click", S.teamId, { prompt: !!installEvt });
     if (installEvt) { const ev = installEvt; ev.prompt(); ev.userChoice.then(c => { installEvt = null; if (c.outcome === "accepted") S.installed = true; render(); }).catch(() => {}); }
     else { S.ui.modal = { kind: "install" }; renderLayer(); }
     return;
@@ -2841,6 +2913,7 @@ document.addEventListener("click", e => {
     sb.rpc("set_team_pin", { p_team: tid, p_pin: pin }).then(({ error }) => { if (error) return toast(errMsg(error)); if (S.teamId === tid) S.pinDefault = false; S.mgr.data?.defaultPins?.delete(tid); toast("PIN set. Share it with your team."); render(); });
     return;
   }
+  if (a === "site-team-pick") { S.siteTeamLeague = S.siteScope?.startsWith("t:") ? S.siteTeamLeague : S.siteScope; setSiteScope("t:" + b.dataset.id); return; }
   if (a === "trend-period") { S.trends.period = b.dataset.v; loadTrends(); return; }
   if (a === "trend-metric") { S.trends.metric = b.dataset.v; render(); return; }
   if (a === "site-refresh") { if (S.trends) S.trends.key = null; S.site = { ...(S.site || {}), error: null }; loadSiteStats(); return; }
@@ -2897,14 +2970,14 @@ document.addEventListener("click", e => {
   }
   if (a === "rm-scratch") { const m = S.matches[b.dataset.m]; if (!m || m.locked || !S.canWrite) return; m.scratches = (m.scratches || []).filter(x => x.id !== b.dataset.id); persist("matches", b.dataset.m); render(); toast("Scratch removed"); return; }
   if (a === "close-modal") { if (e.target !== b) return; S.ui.modal = null; renderLayer(); return; }
-  if (a === "tab") { S.view.tab = b.dataset.v; S.view.matchId = null; S.ui.armed = null; S.ui.unlock = null; render(); window.scrollTo(0, 0); return; }
+  if (a === "tab") { if (S.view.tab !== b.dataset.v) logEvent("tab_view", S.teamId, { tab: b.dataset.v }); S.view.tab = b.dataset.v; S.view.matchId = null; S.ui.armed = null; S.ui.unlock = null; render(); window.scrollTo(0, 0); return; }
   if (a === "open") { S.view.matchId = b.dataset.id; render(); window.scrollTo(0, 0); return; }
   if (a === "scr-sort") { const k = b.dataset.k, st = S.ui.scrSort || { k: "game", dir: 1 }; S.ui.scrSort = { k, dir: st.k === k ? -st.dir : 1 }; render(); return; }
   if (a === "mtoggle") { const ex = S.ui.expanded ||= new Set(), id = b.dataset.id; ex.has(id) ? ex.delete(id) : ex.add(id); render(); return; }
   if (a === "back") { S.view.matchId = null; S.ui.unlock = null; S.ui.relineup = null; render(); return; }
   if (a === "toggle-season") { const id = b.dataset.id, open = S.ui.openSeason === id || (S.ui.openSeason == null && id === curSeasonId()); S.ui.openSeason = open ? "" : id; render(); return; }
   if (a === "note") { S.ui.modal = { kind: "notes", matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g, redraw: true }; renderLayer(); return; }
-  if (a === "notes-view") { S.ui.modal = { kind: "notes-view", matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g }; renderLayer(); return; }
+  if (a === "notes-view") { logEvent("notes_view", S.teamId, { on: b.dataset.g === "match" ? "match" : "game" }); S.ui.modal = { kind: "notes-view", matchId: S.view.matchId, g: b.dataset.g === "match" ? "match" : g }; renderLayer(); return; }
   if (a === "note-edit") { const md = S.ui.modal; md.editId = b.dataset.id; md.armDel = null; md.redraw = true; renderLayer(); return; }
   if (a === "note-cancel-edit") { const md = S.ui.modal; md.editId = null; md.redraw = true; renderLayer(); return; }
   if (a === "note-del" || a === "note-save") {
@@ -3013,7 +3086,8 @@ document.addEventListener("change", e => {
   if (t.id === "gate-league") { S.gate.leagueId = t.value; S.gate.teamId = ""; try { localStorage.setItem("ss-last-league", t.value); } catch (x) {} refreshGateTeams().then(render); return; }
   if (t.id === "mgr-league") { S.mgr.leagueId = t.value; S.mgr.seasonId = null; S.mgr.data = null; render(); return; }
   if (t.id === "imp-file" && t.files?.[0]) { importRead(t.files[0]); t.value = ""; return; }
-  if (t.dataset.act === "trend-scope") { S.trends.scope = t.value; loadTrends(); return; }
+  if (t.dataset.act === "site-league") { S.siteTeamLeague = t.value === "all" ? null : t.value; setSiteScope(t.value); return; }
+  if (t.dataset.act === "site-team") { setSiteScope(t.value || S.siteTeamLeague || "all"); return; }
   if (t.dataset.act === "imp-choice") { const c = S.mgr.imp?.clusters?.find(x => x.key === t.dataset.key); if (c) { c.choice = t.value; render(); } return; }
   if (S.pinDefault && S.teamId && S.view.tab !== "league" && t.id !== "first-pin" && (t.dataset.field || t.dataset.act)) { toast("Set a new team PIN first."); render(); return; }
   if (t.dataset.field === "table") { editMatch(m => { const v = t.value.trim().slice(0, 30); if (v) m.table = v; else delete m.table; }); return; }
