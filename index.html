@@ -13,6 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v71 2026-10-16: Expanded match rows label their columns Matches and Scratches.
   v70 2026-10-16: Copyright notice; Claude prompts moved out of the code into a private table (migration 013).
   v69 2026-10-16: Site tab: league/team scope picker for all KPIs and trends, per-team table, feature usage, device type/system and Home Screen use (migration 012).
   v68 2026-10-16: Site tab errors name the missing database update.
@@ -350,6 +351,8 @@ th{font:500 11px var(--f-mono);letter-spacing:.08em;text-transform:uppercase;col
 .cur-scr{display:flex;flex-wrap:wrap;gap:6px}
 .cur-split{display:grid;grid-template-columns:minmax(0,1.1fr) 1px minmax(0,1fr);gap:12px;align-items:start}
 .cur-div{background:var(--line);align-self:stretch}
+.cur-col{display:grid;gap:8px;align-content:start;min-width:0}
+.cur-col-h{font:700 12px var(--f-mono,ui-monospace,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
 .cur-split .cur-game{gap:8px;font-size:13px}
 .scr-tbl{width:100%;border-collapse:collapse;font-size:13px}
 .scr-tbl th,.scr-tbl td{border:0;padding:3px 4px;text-align:left;vertical-align:top}
@@ -893,7 +896,7 @@ function deviceKind() {
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v70";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v71";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { logEvent("installed", S.teamId); installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -1040,7 +1043,7 @@ function currentCard(m, compact) {
         <div class="small muted">${n ? `${n} present` : "Nobody checked in yet"}${m.locked ? ' · <span class="tag"><span class="lock-ico" aria-hidden="true"></span>Locked</span>' : m.lineupFinal ? ' · <span class="tag">Lineup final</span>' : ""}</div></div>
       <div class="score"><b>${m.forfeit ? "FF" : sc.w + "–" + sc.l}</b>${sc.res ? `<span class="res ${sc.res}">${resLabel(sc.res)}</span>` : ""}</div>
     </div>`}
-    ${compact ? `<div class="cur-split"><div class="cur-games">${games}</div><div class="cur-div" aria-hidden="true"></div>${scrTable(m)}</div>` : `<div class="cur-games">${games}</div>`}
+    ${compact ? `<div class="cur-split"><div class="cur-col"><div class="cur-col-h">Matches</div><div class="cur-games">${games}</div></div><div class="cur-div" aria-hidden="true"></div><div class="cur-col"><div class="cur-col-h">Scratches${(m.scratches || []).length ? ` <span class="muted">${m.scratches.length}</span>` : ""}</div>${scrTable(m)}</div></div>` : `<div class="cur-games">${games}</div>`}
     ${compact ? "" : (m.scratches || []).length ? `<div class="cur-scr">${m.scratches.slice().reverse().map(x => `<span class="scr">${m.locked ? "" : `<button class="scr-edit w" data-act="edit-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Edit scratch">`}G${x.game + 1} · <b>${esc(pName(m.seasonId, x.player, m))}</b> · ${scrLabel(x.type)}${m.locked ? "" : ` <span class="pen" aria-hidden="true">✎</span></button><button class="x w" data-act="rm-scratch" data-m="${m.id}" data-id="${x.id}" aria-label="Remove scratch">×</button>`}</span>`).join("")}</div>` : ""}
     <div class="row"><button class="btn primary" data-act="open" data-id="${m.id}">${m.locked ? "View match" : m.games.some(g => g.p[0]) ? "Open match" : "Set lineup"}</button>
       ${compact ? "" : m.locked ? `<button class="btn rep-btn rep-stack" data-act="report-open" data-id="${m.id}">${REPORT_ICON}Match Report</button>` : `<button class="btn w" data-act="scratch" data-m="${m.id}" ${(m.roster || []).length ? "" : "disabled"}>Log scratch</button>`}
