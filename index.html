@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v60 2026-10-16: "+ Home Screen" button on phones (install prompt on Android, steps on iPhone); service worker loads the newest app when online; open apps offer a reload when a new version is live.
   v59 2026-10-16: Expanded match rows: games on the left, sortable scratch table (game, player, type) on the right.
   v58 2026-10-16: Matches list rows expand in place to show the same details as the Next Match card.
   v57 2026-10-16: League schedule import (Excel/CSV) with preview, duplicate-safe team matching and Claude fallback; imported teams locked until their default PIN 0000 is changed; league venue and match table fields.
@@ -126,6 +127,10 @@ input.pin::placeholder{font:400 15px var(--f-body);letter-spacing:.02em}
 #topbar .tb-exit:hover{opacity:1;background:rgba(255,255,255,.12)}
 #topbar .tb-exit:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 @media (max-width:480px){#topbar .tb-who{display:none}}
+#topbar .tb-install{padding:6px 10px;font-size:13px;background:rgba(255,255,255,.12)}
+@media (max-width:480px){#topbar.has-install .tb-name{font-size:14px;line-height:1.05;white-space:normal;max-width:12ch}}
+.install-steps{margin:0;padding-left:22px;display:grid;gap:8px;font-size:15px}
+.upd{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:30;display:flex;gap:12px;align-items:center;background:#16211b;color:#fff;padding:10px 12px 10px 16px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:14px;width:max-content;max-width:calc(100% - 24px)}
 .who-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
 .who-chip b{color:var(--ink);font-weight:600;max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #report{position:fixed;inset:0;z-index:30;background:rgba(5,12,8,.92);display:flex;flex-direction:column;align-items:center;gap:10px;overflow:auto;padding:calc(10px + env(safe-area-inset-top,0px)) 12px calc(16px + env(safe-area-inset-bottom,0px))}
@@ -803,6 +808,43 @@ async function boot() {
   return showGate();
 }
 
+/* ---------- Home Screen install + fresh versions ---------- */
+const APP_VERSION = "v60";   // bump with each release; open apps compare it with the live page and offer a reload
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
+window.addEventListener("appinstalled", () => { installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
+const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+const isMobileDevice = () => isIOS() || /android|mobile/i.test(navigator.userAgent);
+const showInstall = () => isMobileDevice() && !isStandalone() && !S.installed;
+function renderInstall(L) {
+  const inApp = /FBAN|FBAV|Instagram|Line\/|Twitter|LinkedInApp|GSA\//i.test(navigator.userAgent);
+  const share = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M12 3v12M8 7l4-4 4 4M5 12v8h14v-8"></path></svg>`;
+  const steps = inApp ? [`This page is open inside another app. Open it in ${isIOS() ? "Safari" : "Chrome"} first (look for “Open in browser” in the ••• menu).`, "Then tap + Home Screen again."]
+    : isIOS() ? [`Tap the Share button ${share} in the browser bar (at the bottom in Safari).`, "Scroll down and tap <b>Add to Home Screen</b>.", "Tap <b>Add</b>. The Scratch Sheet opens like an app from your Home Screen."]
+    : ["Tap the browser menu <b>⋮</b> (top right in Chrome).", "Tap <b>Add to Home screen</b> or <b>Install app</b>.", "Confirm. The Scratch Sheet opens like an app from your Home Screen."];
+  L.innerHTML = `<div class="scrim" data-act="close-modal"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="it">
+    <h3 id="it" style="margin:0">Add to your Home Screen</h3>
+    <ol class="install-steps">${steps.map(x => `<li>${x}</li>`).join("")}</ol>
+    <div class="row spread"><span></span><button class="btn primary w" data-act="close-modal">Got it</button></div>
+  </div></div>`;
+}
+async function checkVersion() {
+  if (document.getElementById("upd")) return;
+  try {
+    const t = await (await fetch(location.pathname + "?vc=" + Date.now(), { cache: "no-store" })).text();
+    const v = (t.match(/const APP_VERSION = "([^"]+)"/) || [])[1];
+    if (v && v !== APP_VERSION) {
+      const d = document.createElement("div"); d.id = "upd"; d.className = "upd"; d.setAttribute("role", "status");
+      d.innerHTML = `<span>A new version of The Scratch Sheet is ready.</span><button class="btn small primary" data-act="app-reload">Reload</button>`;
+      document.body.append(d);
+    }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkVersion(); });
+setInterval(checkVersion, 5 * 60e3); setTimeout(checkVersion, 20e3);
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch(() => {});
+
 /* ---------- render ---------- */
 function render() {
   const act = document.activeElement, keep = act && act.id ? { id: act.id, val: act.value, s: act.selectionStart, e: act.selectionEnd, text: act.matches("input[type=text],input[type=search],textarea") } : null;
@@ -810,8 +852,8 @@ function render() {
   app.className = "wrap" + (S.canWrite ? "" : " ro");
   if (S.phase === "app") {
     const who = S.role === "member" ? "Team member" : `${esc(S.username)} · ${S.role === "owner" ? "Owner" : S.role === "league" ? "League admin" : "Team admin"}`;
-    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg?v=27" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span><button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
-    bar.hidden = false;
+    bar.innerHTML = `<div class="tb"><div class="tb-id"><img src="icons/logo.svg?v=27" alt=""><span class="tb-name">The Scratch Sheet</span></div><div class="tb-right"><span class="tb-who">${who}</span>${showInstall() ? `<button class="tb-exit tb-install" data-act="install" title="Add The Scratch Sheet to your Home Screen">+ Home Screen</button>` : ""}<button class="tb-exit" data-act="sign-out">${S.role === "member" ? "Exit" : "Sign out"}</button></div></div>`;
+    bar.hidden = false; bar.classList.toggle("has-install", showInstall());
   } else { bar.hidden = true; bar.innerHTML = ""; }
   if (S.phase !== "app") {
     app.innerHTML = `<header><div class="brand"><div class="brand-id"><img class="logo" src="icons/logo.svg?v=27" width="64" height="64" alt=""><div><div class="eyebrow">8-ball doubles league</div><h1>The Scratch Sheet</h1></div></div></div></header><main>${S.phase === "boot" ? "" : viewGate()}</main>`;
@@ -1449,6 +1491,7 @@ function renderLayer() {
   if (md.kind === "scratch") { renderScratch(md, L); return; }
   if (md.kind === "notes") { renderNotes(md, L); return; }
   if (md.kind === "notes-view") { renderNotesView(md, L); return; }
+  if (md.kind === "install") { renderInstall(L); return; }
   S.ui.modal = null; L.innerHTML = "";
 }
 
@@ -2542,6 +2585,12 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-act]"); if (!b || b.tagName === "SELECT" || b.type === "checkbox") return;
   const a = b.dataset.act, g = +b.dataset.g;
   if (a.startsWith("gate-")) { gateAction(a, b); return; }
+  if (a === "app-reload") { location.reload(); return; }
+  if (a === "install") {
+    if (installEvt) { const ev = installEvt; ev.prompt(); ev.userChoice.then(c => { installEvt = null; if (c.outcome === "accepted") S.installed = true; render(); }).catch(() => {}); }
+    else { S.ui.modal = { kind: "install" }; renderLayer(); }
+    return;
+  }
   if (S.pinDefault && S.teamId && S.view.tab !== "league" && !PIN_SAFE.has(a)) { toast("Set a new team PIN first."); return; }
   if (a === "pin-first") {
     const pin = ($("#first-pin")?.value || "").trim();
