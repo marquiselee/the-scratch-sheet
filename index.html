@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v65 2026-10-16: Anonymous device ID; one visit per device, team and day is recorded (migration 009); Site tab shows unique devices.
   v64 2026-10-16: "Owner" is now called Site admin; site admins get a Site tab with stats across all leagues (migration 008).
   v63 2026-10-16: Match report has a second swipeable card with every error (scratch), match notes and game notes; Save image saves the card on screen.
   v62 2026-10-16: Phone top bar: name sized from the space actually available (measured after fonts load), larger cube.
@@ -713,6 +714,7 @@ async function loadTeam(teamId) {
   if (chan) { sb.removeChannel(chan); chan = null; }
   if (repChan) { sb.removeChannel(repChan); repChan = null; }
   S.teamId = teamId; S.seasons = {}; S.matches = {}; S.reports = {}; S.view.matchId = null; S.pinDefault = false;
+  touchDevice(teamId);
   sb.rpc("team_pin_is_default", { p_team: teamId }).then(({ data }) => { if (S.teamId === teamId && data === true) { S.pinDefault = true; render(); } });
   S.loaded = { team: false, seasons: false, matches: false, rules: false }; render();
   const t = await sb.from("teams").select("id,name,league_id").eq("id", teamId).maybeSingle();
@@ -835,8 +837,23 @@ async function boot() {
   return showGate();
 }
 
+/* ---------- device ID (anonymous; counts unique devices for site stats) ---------- */
+function deviceId() {
+  try {
+    let id = localStorage.getItem("ss-device");
+    if (!id || !/^[A-Za-z0-9-]{16,64}$/.test(id)) { id = (crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("")); localStorage.setItem("ss-device", id); }
+    return id;
+  } catch (e) { return null; }   // storage blocked (private mode etc.): don't count rather than overcount
+}
+function touchDevice(teamId) {
+  const id = deviceId(); if (!id || !teamId) return;
+  const k = "ss-dev-" + teamId, today = todayISO();
+  try { if (localStorage.getItem(k) === today) return; } catch (e) { return; }
+  sb.rpc("touch_device", { p_device: id, p_team: teamId }).then(({ error }) => { if (!error) try { localStorage.setItem(k, today); } catch (e) {} });
+}
+
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v64";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v65";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -1724,18 +1741,21 @@ function viewSite() {
   <section class="panel"><h3>Activity</h3>
     <div class="site-grid">
       ${tile("Team sign-ins", n(a.signins_7), `last 7 days · ${n(a.signins_30)} in 30`)}
-      ${tile("People signed in", n(a.people_30), "last 30 days (by device)")}
+      ${a.devices_30 != null ? tile("Unique devices", n(a.devices_30), `last 30 days · ${n(a.devices_7)} in 7 · ${n(a.devices_today)} today`) : ""}
+      ${t.devices_all != null ? tile("All-time devices", n(t.devices_all), t.devices_since ? `since ${new Date(t.devices_since + "T12:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}` : "counting starts now") : ""}
       ${tile("Matches edited", n(a.matches_edited_7), `last 7 days · ${n(a.matches_edited_30)} in 30`)}
       ${tile("Active teams", n(a.active_teams_30), "edited a match in 30 days")}
       ${a.failed_pins_7 ? tile("Wrong PINs", n(a.failed_pins_7), "last 7 days") : ""}
     </div>
     ${weeks.length ? `<div class="site-k" style="margin-top:6px">Matches played per week · last 12 weeks</div>
-    <div class="site-bars">${weeks.map(w => `<div class="site-bar" title="Week of ${esc(w.week)}: ${w.matches} matches, ${w.scratches} errors"><span style="height:${Math.round(100 * w.matches / max)}%"></span><b>${w.matches}</b><i>${esc(w.week.slice(5).replace("-", "/"))}</i></div>`).join("")}</div>` : ""}
-    <p class="small muted" style="margin:0">Sign-ins count PIN entries, which are kept for 30 days. Admin email sign-ins aren't included.</p>
+    <div class="site-bars">${weeks.map(w => `<div class="site-bar" title="Week of ${esc(w.week)}: ${w.matches} matches, ${w.scratches} errors"><span style="height:${Math.round(100 * w.matches / max)}%"></span><b>${w.matches}</b><i>${esc(w.week.slice(5).replace("-", "/"))}</i></div>`).join("")}</div>
+    ${weeks.some(w => w.devices != null) ? `<div class="site-k" style="margin-top:6px">Unique devices per week</div>
+    <div class="site-bars">${(() => { const dm = Math.max(1, ...weeks.map(w => w.devices || 0)); return weeks.map(w => `<div class="site-bar" title="Week of ${esc(w.week)}: ${w.devices || 0} devices"><span style="height:${Math.round(100 * (w.devices || 0) / dm)}%;background:#2a78b0"></span><b>${w.devices || 0}</b><i>${esc(w.week.slice(5).replace("-", "/"))}</i></div>`).join(""); })()}</div>` : ""}` : ""}
+    <p class="small muted" style="margin:0">Unique devices: each browser keeps a random ID (nothing personal) and is counted once per day it opens a team. Clearing browser data, private browsing, or using both Safari and the Home Screen app counts as a new device. Team sign-ins count PIN entries, kept for 30 days.</p>
   </section>
   <section class="panel"><h3>Leagues</h3>
-    <div class="tbl"><table><thead><tr><th>League</th><th>Season</th><th>Teams</th><th>Players</th><th>Played</th><th>Locked</th><th>Errors</th><th>Reports</th><th>Last activity</th></tr></thead><tbody>
-      ${(d.leagues || []).map(l => `<tr><td><b>${esc(l.name)}</b>${l.city ? `<div class="small muted">${esc(l.city)}</div>` : ""}</td><td>${esc(l.season || "—")}</td><td>${n(l.teams)}</td><td>${n(l.players)}</td><td>${n(l.played)}<span class="muted"> / ${n(l.matches)}</span></td><td>${n(l.locked)}</td><td>${n(l.scratches)}</td><td>${n(l.reports)}</td><td>${ago(l.last_activity)}</td></tr>`).join("") || `<tr><td colspan="9" class="muted">No leagues yet.</td></tr>`}
+    <div class="tbl"><table><thead><tr><th>League</th><th>Season</th><th>Teams</th><th>Players</th><th>Played</th><th>Locked</th><th>Errors</th><th>Reports</th><th>Devices<span class="muted"> 30d</span></th><th>Last activity</th></tr></thead><tbody>
+      ${(d.leagues || []).map(l => `<tr><td><b>${esc(l.name)}</b>${l.city ? `<div class="small muted">${esc(l.city)}</div>` : ""}</td><td>${esc(l.season || "—")}</td><td>${n(l.teams)}</td><td>${n(l.players)}</td><td>${n(l.played)}<span class="muted"> / ${n(l.matches)}</span></td><td>${n(l.locked)}</td><td>${n(l.scratches)}</td><td>${n(l.reports)}</td><td>${l.devices_30 != null ? n(l.devices_30) : "—"}</td><td>${ago(l.last_activity)}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">No leagues yet.</td></tr>`}
     </tbody></table></div>
   </section>`;
 }
