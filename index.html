@@ -13,6 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v73 2026-11-12: Site tab: Team usage panel ranks teams by how much they use the app and each feature (7/30/90 days), with leaders and feature mix. Needs migration 014.
   v72 2026-10-16: Phones: bottom tab bar fits six tabs and long admin emails wrap, so pages no longer overflow the screen width.
   v71 2026-10-16: Expanded match rows label their columns Matches and Scratches.
   v70 2026-10-16: Copyright notice; Claude prompts moved out of the code into a private table (migration 013).
@@ -266,6 +267,11 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .legend{font-size:12px;color:var(--muted)}
 .tools{display:flex;gap:4px}
 .has-note{color:var(--chalk)}
+.seg.usage-seg{display:inline-grid;grid-template-columns:repeat(3,auto)}
+.seg.usage-seg button{font-size:12px;padding:6px 10px;min-height:32px}
+.seg.usage-seg button[aria-pressed="true"]{background:var(--cloth);color:#fff}
+.site-v.usage-lead{font-size:17px;font-family:var(--f-body);font-weight:700;line-height:1.2;overflow-wrap:anywhere}
+.usage-tbl th,.usage-tbl td{white-space:nowrap}
 .seg.trend-seg{max-width:560px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
 .seg.trend-seg button{font-size:11px;letter-spacing:-.02em;padding:8px 2px;min-height:38px;min-width:0}
 .seg.trend-seg button[aria-pressed="true"]{background:var(--cloth);color:#fff}
@@ -900,7 +906,7 @@ function deviceKind() {
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v72";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v73";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { logEvent("installed", S.teamId); installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -1866,6 +1872,61 @@ function missingUpdate(msg) {
   const hit = map.find(([re]) => re.test(m));
   return hit ? `The database is missing update ${hit[1]}. In Supabase → SQL Editor, run supabase/migrations/${hit[1]}_*.sql, then run every later update again in order (they're safe to re-run), and reload.` : null;
 }
+// team usage leaderboard: which teams use the app, and which features
+const USAGE_COLS = [
+  ["device_days", "Active", "Device-days: each device counts once per day it opens the team"],
+  ["devices", "Devices", "Unique devices that opened the team"],
+  ["signins", "Sign-ins", "PIN and admin sign-ins"],
+  ["report_views", "Reports read", "Match reports opened"],
+  ["report_details", "Report details", "Swiped to the errors & notes card"],
+  ["report_saves", "Reports saved", "Report images saved or shared"],
+  ["notes_views", "Notes", "Game or match notes opened"],
+  ["stats_tab", "Stats tab", "Switched to the Stats tab"],
+  ["scratches_logged", "Errors logged", "Scratches and fouls entered"],
+  ["matches_locked", "Locked", "Matches finalized"],
+  ["home_devices", "Home Screen", "Devices opening from a Home Screen icon"],
+  ["phone_devices", "Phones", "Devices on a phone"],
+  ["computer_devices", "Computers", "Devices on a computer"]];
+async function loadUsage() {
+  const u = S.usage ||= { days: 30 }, key = u.days + "|" + (S.siteScope || "all");
+  if (u.loading === key || u.key === key) return;
+  u.loading = key; u.error = null;
+  const { data, error } = await sb.rpc("site_team_usage", { p_scope: S.siteScope || "all", p_days: u.days });
+  if (u.loading !== key) return;
+  u.loading = null; u.key = key; u.data = error ? null : data;
+  u.error = error ? (/site_team_usage/.test(errMsg(error)) ? "The database is missing update 014. In Supabase → SQL Editor, run supabase/migrations/014_team_usage.sql, then reload." : errMsg(error)) : null;
+  if (S.view.tab === "site") render();
+}
+function viewUsage() {
+  const u = S.usage ||= { days: 30 }, key = u.days + "|" + (S.siteScope || "all");
+  if (u.key !== key) loadUsage();
+  const head = `<div class="row spread"><h3>Team usage</h3><div class="seg usage-seg" role="group" aria-label="Period">${[7, 30, 90].map(x => `<button data-act="usage-days" data-v="${x}" aria-pressed="${u.days === x}">${x} days</button>`).join("")}</div></div>`;
+  if (u.error) return `<section class="panel">${head}<div class="notes"><div class="e">${esc(u.error)}</div></div></section>`;
+  if (u.key !== key || !u.data) return `<section class="panel">${head}<p class="small muted" style="margin:0">Loading…</p></section>`;
+  const teams = (u.data.teams || []).map(t => ({ ...t, _name: t.name })), n = x => Number(x || 0).toLocaleString();
+  const used = teams.filter(t => t.device_days || t.signins);
+  // leaders: who uses each headline feature most
+  const lead = (k, label) => { const top = used.slice().sort((a, b) => (b[k] || 0) - (a[k] || 0))[0]; return top && top[k] ? `<div class="site-tile"><div class="site-k">${label}</div><div class="site-v usage-lead">${esc(top.name)}</div><div class="small muted">${n(top[k])} · ${esc(top.league)}</div></div>` : ""; };
+  const leaders = [lead("device_days", "Most active"), lead("report_views", "Reads reports most"), lead("stats_tab", "Checks stats most"), lead("scratches_logged", "Logs most errors"), lead("home_devices", "Most on Home Screen")].join("");
+  const cols = { name: { v: r => r.name.toLowerCase() } }; USAGE_COLS.forEach(([k]) => cols[k] = { v: r => r[k] || 0 });
+  cols.last_seen = { v: r => r.last_seen ? Date.parse(r.last_seen) : 0 };
+  const def = { k: "device_days", dir: "desc" }, rows = sortRows("usage", teams, cols, def);
+  const multi = new Set(teams.map(t => t.league)).size > 1;
+  const ago = iso => { if (!iso) return "—"; const m = (Date.now() - Date.parse(iso)) / 60000; return m < 60 ? `${Math.max(1, Math.round(m))} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+  // feature mix across teams in scope: share of active teams that used each feature
+  const mix = [["report_views", "Read a match report"], ["report_details", "Swiped to report details"], ["report_saves", "Saved a report"], ["notes_views", "Opened notes"], ["stats_tab", "Opened the Stats tab"], ["home_devices", "Use the Home Screen app"]]
+    .map(([k, l]) => [l, used.filter(t => t[k]).length]);
+  return `<section class="panel">${head}
+    <p class="small muted" style="margin:0">${n(used.length)} of ${n(teams.length)} team${teams.length === 1 ? "" : "s"} used the app in the last ${u.days} days.</p>
+    ${used.length ? `<div class="site-grid">${leaders}</div>
+    <div class="site-k">Share of active teams using each feature</div>
+    ${mix.map(([l, v]) => `<div class="plat-row"><span>${esc(l)}</span><span class="pct-bar"><span style="width:${Math.round(100 * v / used.length)}%"></span></span><b>${n(v)}</b><span class="muted">${Math.round(100 * v / used.length)}%</span></div>`).join("")}` : ""}
+    <div class="tbl"><table class="usage-tbl"><thead><tr>${th("usage", "name", "Team", def)}${USAGE_COLS.map(([k, l, tip]) => th("usage", k, l, def, tip)).join("")}${th("usage", "last_seen", "Last seen", def)}</tr></thead><tbody>
+      ${rows.map(t => `<tr class="${S.siteScope === "t:" + t.id ? "sel" : ""} ${t.device_days || t.signins ? "" : "muted"}"><td><button class="linkish" data-act="site-team-pick" data-id="${t.id}" data-lg="${esc(t.league_id || "")}">${esc(t.name)}</button>${multi ? `<div class="small muted">${esc(t.league)}</div>` : ""}</td>${USAGE_COLS.map(([k]) => `<td>${t[k] ? n(t[k]) : '<span class="muted">0</span>'}</td>`).join("")}<td>${ago(t.last_seen)}</td></tr>`).join("") || `<tr><td colspan="${USAGE_COLS.length + 2}" class="muted">No teams yet.</td></tr>`}
+    </tbody></table></div>
+    <p class="small muted" style="margin:0">Tap a column to sort, or a team to see its full stats. "Active" counts each device once per day it opens the team, so it rewards teams that come back, not just big rosters. Detail is kept for 100 days.</p>
+  </section>`;
+}
 function viewSite() {
   const st = S.site;
   if (!st || (!st.data && !st.loading && !st.error) || (st.scope && st.scope !== (S.siteScope || "all") && !st.loading)) { loadSiteStats(); return `<h2>Site</h2><div class="panel"><p class="muted" style="margin:0">Loading site stats…</p></div>`; }
@@ -1902,6 +1963,7 @@ function viewSite() {
     <p class="small muted" style="margin:0">Unique devices: each browser keeps a random ID (nothing personal) and is counted once per day it opens a team. Clearing browser data, private browsing, or using both Safari and the Home Screen app counts as a new device. Sign-ins include team PIN entries and admin email sign-ins.</p>
   </section>
   ${viewTrends(d)}
+  ${viewUsage()}
   ${viewFeatures(d)}
   ${viewPlatform(d)}
   ${viewTeamsKpi(d)}
@@ -2922,10 +2984,11 @@ document.addEventListener("click", e => {
     sb.rpc("set_team_pin", { p_team: tid, p_pin: pin }).then(({ error }) => { if (error) return toast(errMsg(error)); if (S.teamId === tid) S.pinDefault = false; S.mgr.data?.defaultPins?.delete(tid); toast("PIN set. Share it with your team."); render(); });
     return;
   }
-  if (a === "site-team-pick") { S.siteTeamLeague = S.siteScope?.startsWith("t:") ? S.siteTeamLeague : S.siteScope; setSiteScope("t:" + b.dataset.id); return; }
+  if (a === "site-team-pick") { S.siteTeamLeague = b.dataset.lg || (S.siteScope?.startsWith("t:") ? S.siteTeamLeague : S.siteScope); setSiteScope("t:" + b.dataset.id); return; }
   if (a === "trend-period") { S.trends.period = b.dataset.v; loadTrends(); return; }
   if (a === "trend-metric") { S.trends.metric = b.dataset.v; render(); return; }
-  if (a === "site-refresh") { if (S.trends) S.trends.key = null; S.site = { ...(S.site || {}), error: null }; loadSiteStats(); return; }
+  if (a === "usage-days") { S.usage = { days: Number(b.dataset.v) || 30 }; render(); return; }
+  if (a === "site-refresh") { if (S.usage) S.usage.key = null; if (S.trends) S.trends.key = null; S.site = { ...(S.site || {}), error: null }; loadSiteStats(); return; }
   if (a === "imp-cancel") { S.mgr.imp = null; render(); return; }
   if (a === "imp-claude") { importClaude(); return; }
   if (a === "imp-run") { importRun(); return; }
