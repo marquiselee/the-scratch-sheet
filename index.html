@@ -13,6 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v74 2026-11-12: Stats tab: Claude writes a 3–4 sentence season-so-far update after each locked match (one per lock, not per view), with earlier updates kept. Needs migration 015 and the updated match-report function.
   v73 2026-11-12: Site tab: Team usage panel ranks teams by how much they use the app and each feature (7/30/90 days), with leaders and feature mix. Needs migration 014.
   v72 2026-10-16: Phones: bottom tab bar fits six tabs and long admin emails wrap, so pages no longer overflow the screen width.
   v71 2026-10-16: Expanded match rows label their columns Matches and Scratches.
@@ -267,6 +268,11 @@ input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-vis
 .legend{font-size:12px;color:var(--muted)}
 .tools{display:flex;gap:4px}
 .has-note{color:var(--chalk)}
+.season-sum{border-left:4px solid var(--cloth)}
+.season-head{margin:2px 0 0;font-size:20px;line-height:1.2}
+.season-text{margin:0;font-size:15px;line-height:1.5}
+.season-hist{display:grid;gap:10px;border-top:1px solid var(--line);padding-top:10px}
+.season-old p{margin:2px 0 0;font-size:14px;line-height:1.45;color:var(--muted)}
 .seg.usage-seg{display:inline-grid;grid-template-columns:repeat(3,auto)}
 .seg.usage-seg button{font-size:12px;padding:6px 10px;min-height:32px}
 .seg.usage-seg button[aria-pressed="true"]{background:var(--cloth);color:#fff}
@@ -681,7 +687,7 @@ const SB_KEY = "sb_publishable_0Bg3NuYq58agSddJxfc71w_ZRJEAeoj"; // public key: 
 const toEmail = u => String(u).trim().toLowerCase();
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const APP_URL = location.origin + location.pathname;
-let sb = null, chan = null, repChan = null;
+let sb = null, chan = null, repChan = null, sumChan = null;
 const errMsg = e => (e && (e.message || e.error_description)) || "Something went wrong. Check your connection and try again.";
 
 /* ---------- saving ---------- */
@@ -754,7 +760,8 @@ async function loadSeasons() {
 async function loadTeam(teamId) {
   if (chan) { sb.removeChannel(chan); chan = null; }
   if (repChan) { sb.removeChannel(repChan); repChan = null; }
-  S.teamId = teamId; S.seasons = {}; S.matches = {}; S.reports = {}; S.view.matchId = null; S.pinDefault = false;
+  if (sumChan) { sb.removeChannel(sumChan); sumChan = null; }
+  S.teamId = teamId; S.seasons = {}; S.matches = {}; S.reports = {}; S.seasonSums = {}; S.view.matchId = null; S.pinDefault = false;
   touchDevice(teamId);
   sb.rpc("team_pin_is_default", { p_team: teamId }).then(({ data }) => { if (S.teamId === teamId && data === true) { S.pinDefault = true; render(); } });
   S.loaded = { team: false, seasons: false, matches: false, rules: false }; render();
@@ -766,6 +773,7 @@ async function loadTeam(teamId) {
     sb.from("matches").select("id,data").eq("team_id", teamId),
   ]);
   (ma.data || []).forEach(r => S.matches[r.id] = r.data);
+  sb.from("season_summaries").select("season_id,as_of,data,history,updated_at").eq("team_id", teamId).then(({ data }) => { if (S.teamId !== teamId) return; (data || []).forEach(r => S.seasonSums[r.season_id] = r); S.seasonSums._loaded = true; if (S.view.tab === "standings") render(); });
   sb.from("match_reports").select("match_id,locked_at,data").eq("team_id", teamId).then(({ data }) => { (data || []).forEach(r => S.reports[r.match_id] = r); if (data?.length) { render(); renderReport(); } });
   S.league = lg.data || { name: "", current_season_id: null };
   S.team = { name: t.data.name, activeSeasonId: S.league.current_season_id || "" };
@@ -799,6 +807,13 @@ async function loadTeam(teamId) {
     .on("postgres_changes", { event: "*", schema: "public", table: "match_reports", filter: `team_id=eq.${teamId}` }, p => {
       if (p.eventType === "DELETE") delete S.reports[p.old?.match_id]; else if (p.new?.match_id) S.reports[p.new.match_id] = p.new;
       renderReport();
+    })
+    .subscribe();
+  // season updates: their own channel too
+  sumChan = sb.channel("seasonsum-" + teamId)
+    .on("postgres_changes", { event: "*", schema: "public", table: "season_summaries", filter: `team_id=eq.${teamId}` }, p => {
+      if (p.eventType === "DELETE") delete S.seasonSums[p.old?.season_id]; else if (p.new?.season_id) S.seasonSums[p.new.season_id] = p.new;
+      if (S.view.tab === "standings") render();
     })
     .subscribe();
   render();
@@ -906,7 +921,7 @@ function deviceKind() {
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v73";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v74";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { logEvent("installed", S.teamId); installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -1470,6 +1485,97 @@ function scratchStats(sid, ms) {
   </section>`;
 }
 
+/* ---------- season-so-far update (Stats tab): written by Claude after each locked match ---------- */
+// latest lock in a season: the summary is current when it covers this lock
+function seasonLock(sid) {
+  const locked = Object.values(S.matches).filter(m => m.seasonId === sid && m.locked && Number(m.lockedAt));
+  return { n: locked.length, asOf: locked.length ? Math.max(...locked.map(m => Number(m.lockedAt))) : 0 };
+}
+function seasonFacts(sid) {
+  const s = S.seasons[sid], lk = seasonLock(sid), team = S.team.name || "Our team";
+  const ms = seasonMatches(sid).filter(m => m.locked).sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.created || 0) - (b.created || 0));
+  const name = (id, m) => pName(sid, id, m).replace(/ \(sub\)$/, "");
+  const rec = arr => arr.reduce((a, x) => { const r = score(x).res; if (r) a[r]++; return a; }, { W: 0, L: 0, T: 0 });
+  const fmtRec = r => `${r.W}–${r.L}${r.T ? "–" + r.T : ""}`;
+  const reg = ms.filter(m => !m.playoff), po = ms.filter(m => m.playoff);
+  const seq = ms.map(m => score(m).res).filter(Boolean); let streak = 0;
+  for (let i = seq.length - 1; i >= 0 && seq[i] === seq[seq.length - 1]; i--) streak++;
+  // players: season totals, plus form over the last 3 matches
+  const recentIds = new Set(ms.slice(-3).map(m => m.id));
+  const pl = {}, row = id => pl[id] ||= { id, nights: 0, g: 0, w: 0, l: 0, s: 0, rg: 0, rw: 0, rs: 0 };
+  ms.forEach(m => {
+    (m.roster || []).forEach(id => row(id).nights++);
+    (m.games || []).forEach(g => [...new Set((g.p || []).filter(Boolean))].forEach(id => { if (!(g.result === "W" || isLossRes(g.result))) return; const r = row(id); r.g++; g.result === "W" ? r.w++ : r.l++; if (recentIds.has(m.id)) { r.rg++; if (g.result === "W") r.rw++; } }));
+    (m.scratches || []).forEach(x => { const r = row(x.player); r.s++; if (recentIds.has(m.id)) r.rs++; });
+  });
+  const roster = new Set((s?.players || []).map(p => p.id));
+  const players = Object.values(pl).filter(r => roster.has(r.id) && (r.g || r.nights)).map(r => ({
+    name: name(r.id), matches: r.nights, games: r.g, won: r.w, lost: r.l, winPct: r.g ? Math.round(100 * r.w / r.g) : null,
+    errors: r.s, errorsPerGame: r.g ? +(r.s / r.g).toFixed(2) : null,
+    last3: r.rg ? { games: r.rg, won: r.rw, errors: r.rs } : undefined,
+  })).sort((a, b) => b.won - a.won || (b.winPct ?? -1) - (a.winPct ?? -1));
+  // pairs with at least 3 games together
+  const pairs = {};
+  ms.forEach(m => (m.games || []).forEach(g => { const ps = (g.p || []).filter(Boolean); if (ps.length < 2 || !(g.result === "W" || g.result === "L")) return; const k = [...ps].sort().join("|"), r = pairs[k] ||= { ps, w: 0, l: 0 }; g.result === "W" ? r.w++ : r.l++; }));
+  const pairList = Object.values(pairs).filter(r => r.w + r.l >= 3).sort((a, b) => (b.w - b.l) - (a.w - a.l)).map(r => ({ pair: r.ps.map(id => name(id)).join(" & "), won: r.w, lost: r.l }));
+  // team trend: last 3 matches against the season before them
+  const gw = arr => arr.reduce((a, m) => { const sc = score(m); a.w += sc.w; a.l += sc.l; a.s += (m.scratches || []).length; a.n++; return a; }, { w: 0, l: 0, s: 0, n: 0 });
+  const last3 = gw(ms.slice(-3)), before = gw(ms.slice(0, -3));
+  const pct = x => x.w + x.l ? Math.round(100 * x.w / (x.w + x.l)) : null;
+  const latest = ms[ms.length - 1];   // the most recent match played (by date)
+  const lsc = latest ? score(latest) : null, lrep = latest ? aiReport(latest.id) || null : null;
+  const today = todayISO(), upcoming = seasonMatches(sid).filter(m => !m.locked && !score(m).res && !m.forfeit).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const notes = ms.slice(-3).flatMap(m => [...(m.games || []).flatMap(g => gameNotes(g)), ...matchNotes(m)].filter(x => x.tag && (x.text || "").trim()).map(x => ({ vs: m.opponent || "", date: m.date || "", tag: x.tag === "hi" ? "highlight" : "lowlight", text: x.text.trim().slice(0, 160) }))).slice(-6);
+  const elim = po.some(m => { const r = score(m).res; return r === "L" && ((m.poFormat || "single") !== "double" || (m.poBracket || "winners") === "elim"); });
+  const champs = po.some(m => score(m).res === "W" && /final/i.test(m.poRound || "") && !/semi|quarter/i.test(m.poRound || ""));
+  return {
+    asOf: lk.asOf, lockedMatches: lk.n, team, league: S.league?.name || "", season: s?.name || "", city: (S.league?.city || "").trim() || undefined,
+    matchesPlayed: ms.length,
+    record: po.length ? { regularSeason: fmtRec(rec(reg)), playoffs: fmtRec(rec(po)), overall: fmtRec(rec(ms)) } : { season: fmtRec(rec(reg)) },
+    gamesRecord: (() => { const t = gw(ms); return `${t.w}–${t.l}`; })(),
+    streak: seq.length && streak >= 2 ? `${streak} straight ${seq[seq.length - 1] === "W" ? "wins" : seq[seq.length - 1] === "L" ? "losses" : "ties"}` : null,
+    results: ms.map(m => { const sc = score(m); return { date: m.date || "", opponent: m.opponent || "TBD", score: m.forfeit ? "forfeit" : `${sc.w}–${sc.l}`, result: { W: "win", L: "loss", T: "tie" }[sc.res] || "", playoff: m.playoff ? (m.poRound || "playoffs") : undefined }; }),
+    latestMatch: latest ? { date: latest.date || "", opponent: latest.opponent || "TBD", score: `${lsc.w}–${lsc.l}`, result: { W: "win", L: "loss", T: "tie" }[lsc.res] || "", forfeit: latest.forfeit ? (latest.forfeit === "them" ? "opponent forfeited" : "we forfeited") : undefined, reportHeadline: lrep?.headline || undefined } : null,
+    trend: ms.length >= 5 ? { last3: { gamesWon: last3.w, gamesLost: last3.l, winPct: pct(last3), errorsPerMatch: +(last3.s / last3.n).toFixed(1) }, before: { gamesWon: before.w, gamesLost: before.l, winPct: pct(before), errorsPerMatch: +(before.s / before.n).toFixed(1) } } : undefined,
+    teamErrors: { total: ms.reduce((a, m) => a + (m.scratches || []).length, 0), perMatch: ms.length ? +(ms.reduce((a, m) => a + (m.scratches || []).length, 0) / ms.length).toFixed(1) : 0 },
+    players, pairs: pairList.slice(0, 4),
+    upcoming: { matchesLeft: upcoming.length, next: upcoming[0] ? { date: upcoming[0].date || "", opponent: upcoming[0].opponent || "TBD", playoff: upcoming[0].playoff ? (upcoming[0].poRound || "playoffs") : undefined } : null, nextIsToday: upcoming[0]?.date === today || undefined },
+    playoffStatus: champs ? "won the league championship" : elim ? "eliminated from the playoffs; season over" : po.length ? "alive in the playoffs" : null,
+    recentNotes: notes.length ? notes : undefined,
+  };
+}
+const sumPending = new Set(), sumTried = new Set();
+async function requestSeasonSummary(sid, force) {
+  if (!sid || !S.teamId || sumPending.has(sid)) return;
+  // wait for this device's lock to reach the server before asking
+  for (let i = 0; i < 40 && Object.keys(S.matches).some(id => S.matches[id].seasonId === sid && busy("matches/" + id)); i++) await new Promise(r => setTimeout(r, 250));
+  const lk = seasonLock(sid), cur = S.seasonSums?.[sid];
+  if (!lk.n || (!force && ((cur && Number(cur.as_of) >= lk.asOf) || sumTried.has(sid + ":" + lk.asOf)))) return;
+  sumPending.add(sid); sumTried.add(sid + ":" + lk.asOf); if (S.view.tab === "standings") render();
+  try {
+    const { data, error } = await sb.functions.invoke("match-report", { body: { action: "season", teamId: S.teamId, seasonId: sid, force: !!force, facts: seasonFacts(sid) } });
+    if (data?.summary) S.seasonSums[sid] = data.summary;
+    else if (force || S.view.tab === "standings") { let why = data?.error; try { why ||= (await error?.context?.json?.())?.error; } catch (e) {} if (force || !/missing update 015/.test(why || "")) toast("Season update: " + (why || error?.message || "Claude couldn't be reached")); }
+  } catch (e) { if (force) toast("Season update: Claude couldn't be reached."); }
+  sumPending.delete(sid); if (S.view.tab === "standings") render();
+}
+function viewSeasonSummary(sid) {
+  const lk = seasonLock(sid), cur = S.seasonSums?.[sid], busyNow = sumPending.has(sid);
+  // backup: if a lock didn't get its update (the locking phone went offline), the first visit after it writes one.
+  // Waits 90 s after the lock so it doesn't race the locking phone's own request.
+  if (lk.n && S.seasonSums?._loaded && (!cur || Number(cur.as_of) < lk.asOf) && S.canWrite && Date.now() - lk.asOf > 90000) setTimeout(() => requestSeasonSummary(sid), 0);
+  if (!cur?.data?.summary) return busyNow ? `<section class="panel season-sum"><div class="eyebrow">Season so far</div><p class="small muted rp-writing" style="margin:0">Claude is writing the season update…</p></section>` : "";
+  const d = cur.data, when = cur.updated_at ? new Date(cur.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+  const stale = Number(cur.as_of) < lk.asOf, hist = (cur.history || []).filter(h => h?.data?.summary), open = S.ui.seasonHist === sid;
+  return `<section class="panel season-sum">
+    <div class="eyebrow">Season so far${d.matches ? ` · after ${d.matches} match${d.matches === 1 ? "" : "es"}` : ""}${d.record ? ` · ${esc(d.record)}` : ""}${busyNow ? ` · <span class="rp-writing">${stale ? "updating…" : "rewriting…"}</span>` : ""}</div>
+    ${d.headline ? `<h3 class="season-head">${esc(d.headline)}</h3>` : ""}
+    <p class="season-text">${esc(d.summary)}</p>
+    <div class="row spread"><span class="small muted">Written by Claude${when ? " · " + when : ""}</span><span class="row">${hist.length ? `<button class="btn small ghost" data-act="season-history" data-id="${esc(sid)}">${open ? "Hide earlier" : `Earlier (${hist.length})`}</button>` : ""}${isAdmin() && !busyNow ? `<button class="btn small" data-act="season-rewrite" data-id="${esc(sid)}" title="Have Claude write a fresh take">Rewrite</button>` : ""}</span></div>
+    ${open ? `<div class="season-hist">${hist.map(h => `<div class="season-old"><div class="small muted">After ${h.data.matches || "?"} match${h.data.matches === 1 ? "" : "es"}${h.data.record ? " · " + esc(h.data.record) : ""}${h.at ? " · " + new Date(h.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</div>${h.data.headline ? `<b>${esc(h.data.headline)}</b>` : ""}<p>${esc(h.data.summary)}</p></div>`).join("")}</div>` : ""}
+  </section>`;
+}
+
 function viewStandings(sid) {
   const ms = seasonMatches(sid), s = S.seasons[sid];
   const stats = {};
@@ -1490,6 +1596,7 @@ function viewStandings(sid) {
   const gw = res.reduce((a, x) => a + x.sc.w, 0), gl = res.reduce((a, x) => a + x.sc.l, 0);
   return `
   <h2>Stats · ${esc(s.name)}</h2>
+  ${viewSeasonSummary(sid)}
   <div class="grid2">
     <div class="panel"><div class="eyebrow">Matches</div><div class="score"><b>${W}–${L}${T ? "–" + T : ""}</b><span class="muted small">${T ? "W–L–T · " : ""}${(() => { const t = todayISO(), up = ms.filter(m => !score(m).res && (m.date || "") >= t).length; return up ? up + " upcoming" : ""; })()}</span></div></div>
     <div class="panel"><div class="eyebrow">Games</div><div class="score"><b>${gw}–${gl}</b><span class="muted small">${gw + gl ? Math.round(gw / (gw + gl) * 100) + "% won · breaks ties in league standings" : ""}</span></div></div>
@@ -1867,7 +1974,7 @@ const US_STATES = { AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", 
 // which database update a "does not exist" error points to
 function missingUpdate(msg) {
   const m = String(msg || "");
-  const map = [[/match_reports/, "005"], [/is_default|team_pin_is_default|league_default_pins|aliases|venue/, "007"], [/site_stats/, "008"], [/device_activity|touch_device/, "009"], [/\bevents\b|log_event|my_role/, "010"], [/stats_daily|stats_devices|stats_locations|stats_meta|site_series|stats_rollup/, "011"]];
+  const map = [[/match_reports/, "005"], [/is_default|team_pin_is_default|league_default_pins|aliases|venue/, "007"], [/site_stats/, "008"], [/device_activity|touch_device/, "009"], [/\bevents\b|log_event|my_role/, "010"], [/stats_daily|stats_devices|stats_locations|stats_meta|site_series|stats_rollup/, "011"], [/site_team_usage/, "014"], [/season_summaries/, "015"]];
   if (!/does not exist|could not find|schema cache/i.test(m)) return null;
   const hit = map.find(([re]) => re.test(m));
   return hit ? `The database is missing update ${hit[1]}. In Supabase → SQL Editor, run supabase/migrations/${hit[1]}_*.sql, then run every later update again in order (they're safe to re-run), and reload.` : null;
@@ -2994,6 +3101,8 @@ document.addEventListener("click", e => {
   if (a === "imp-run") { importRun(); return; }
   if (a === "report-page") { const tr = $("#report .rp-track"); if (tr) tr.scrollTo({ left: +b.dataset.v * tr.clientWidth, behavior: "smooth" }); return; }
   if (a === "report-open") { logEvent("report_view", S.teamId, { match: b.dataset.id }); S.ui.reportPage = 0; S.ui.report = b.dataset.id; renderReport(); if (S.canWrite) requestReport(b.dataset.id); return; }
+  if (a === "season-rewrite") { if (isAdmin()) requestSeasonSummary(b.dataset.id, true); return; }
+  if (a === "season-history") { S.ui.seasonHist = S.ui.seasonHist === b.dataset.id ? null : b.dataset.id; render(); return; }
   if (a === "report-rewrite") { if (S.ui.report && isAdmin()) requestReport(S.ui.report, true); return; }
   if (a === "report-close") { S.ui.report = null; renderReport(); return; }
   if (a === "report-save") { logEvent("report_save", S.teamId, { match: S.ui.report, card: S.ui.reportPage ? "details" : "report" }); saveReportImage(); return; }
@@ -3102,7 +3211,7 @@ document.addEventListener("click", e => {
     const id = S.view.matchId; if (S.ui.relineup?.id !== id || S.ui.relineup.step !== 2) return;
     S.ui.relineup = null; editMatch(x => { x.lineupFinal = false; delete x.lineupFinalAt; }); toast("Lineup reopened for editing"); return;
   }
-  if (a === "lock") { const id = S.view.matchId, m = S.matches[id]; if (!m) return; m.locked = true; m.lockedAt = Date.now(); if (!m.lineupFinal) { m.lineupFinal = true; m.lineupFinalAt = m.lockedAt; } S.ui.relineup = null; S.ui.unlock = null; persist("matches", id); render(); toast("Match locked"); requestReport(id); return; }
+  if (a === "lock") { const id = S.view.matchId, m = S.matches[id]; if (!m) return; m.locked = true; m.lockedAt = Date.now(); if (!m.lineupFinal) { m.lineupFinal = true; m.lineupFinalAt = m.lockedAt; } S.ui.relineup = null; S.ui.unlock = null; persist("matches", id); render(); toast("Match locked"); requestReport(id); requestSeasonSummary(m.seasonId); return; }
   if (/^unlock-(start|next|confirm)$/.test(a) && !isAdmin()) return;
   if (a === "unlock-start") { S.ui.unlock = { id: S.view.matchId, step: 1 }; render(); return; }
   if (a === "unlock-next") { S.ui.unlock = { id: S.view.matchId, step: 2 }; render(); return; }

@@ -1552,3 +1552,29 @@ begin
 end $$;
 revoke all on function public.site_team_usage(text, int) from public, anon;
 grant execute on function public.site_team_usage(text, int) to authenticated;
+
+-- ===== migration 015: season summaries =====
+
+create table if not exists public.season_summaries (
+  team_id    uuid not null references public.teams (id) on delete cascade,
+  season_id  text not null,
+  as_of      bigint not null,                 -- lockedAt of the latest locked match it covers
+  data       jsonb not null default '{}',     -- { headline, summary, voice, matches, record }
+  history    jsonb not null default '[]',     -- earlier versions, newest first: [{ as_of, data, at }]
+  model      text,
+  gen_count  int not null default 0,          -- writes for this as_of (rewrites are capped for team admins)
+  updated_at timestamptz not null default now(),
+  primary key (team_id, season_id)
+);
+
+alter table public.season_summaries enable row level security;
+drop policy if exists season_summaries_read on public.season_summaries;
+create policy season_summaries_read on public.season_summaries for select using (public.can_access_team(team_id));
+
+revoke all on public.season_summaries from anon, authenticated;
+grant select on public.season_summaries to authenticated;
+
+alter table public.season_summaries replica identity full;
+do $$ begin
+  alter publication supabase_realtime add table public.season_summaries;
+exception when duplicate_object then null; when undefined_object then null; end $$;

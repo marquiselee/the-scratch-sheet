@@ -49,6 +49,7 @@ Admins can tap **Forgot password?** on the sign-in screen to get a reset link by
 - `supabase/migrations/005_match_reports.sql` adds the table for Claude-written match reports.
 - `supabase/migrations/013_ai_prompts.sql` adds the private table that holds the Claude prompts (load them with the private prompts file, which is not in this repo).
 - `supabase/migrations/014_team_usage.sql` adds the Team usage panel on the Site tab: which teams use the app and which features, over 7, 30 or 90 days.
+- `supabase/migrations/015_season_summaries.sql` stores the season-so-far update Claude writes on the Stats tab after each locked match (its prompt, `season_system`, goes in the private prompts table).
 - `supabase/migrations/012_kpis_by_scope.sql` adds per-team summaries, feature/tab usage, device type and Home Screen stats, and the Site tab's league/team picker.
 - `supabase/migrations/011_stats_rollups.sql` summarizes stats by day/week/month/quarter and deletes device-level rows after 100 days (only summaries are kept); adds the Site tab's Trends.
 - `supabase/migrations/010_events.sql` records anonymous stat events (sign-ins, visits with US-state/country location, match and report activity) for site stats (raw rows kept 100 days, see 011).

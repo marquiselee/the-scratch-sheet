@@ -1,6 +1,6 @@
 // The Scratch Sheet — "match-report" Edge Function.
 // Writes a locked match's headline, summary, highlights and lowlights with Claude and saves them
-// to public.match_reports. The Anthropic key lives only here, as the ANTHROPIC_API_KEY secret.
+// to public.match_reports. Also writes the season-so-far update on the Stats tab (action "season"). The Anthropic key lives only here, as the ANTHROPIC_API_KEY secret.
 //
 // Deploy: Supabase → Edge Functions → Deploy a new function → Via Editor → name it match-report,
 // paste this file, Deploy. Then turn OFF "Verify JWT with legacy secret" in its settings
@@ -36,6 +36,12 @@ const FALLBACK_VOICE_NOTE = `\n\nWrite in the voice of {name}: {style}.`;
 const FALLBACK_SCHEDULE = `Read the pool league schedule below (one spreadsheet row per line, cells as COLUMNROW=value) and reply with one JSON object only:
 {"year": number, "venue": string|null, "games": [{"date": "YYYY-MM-DD", "time": "HH:MM" or null, "home": string, "away": string, "table": string or null, "week": string or null, "playoff": boolean, "round": string or null}]}
 Copy team names exactly. Never invent matches.`;
+const FALLBACK_SEASON = `You write a short season-so-far update for a recreational 8-ball doubles pool league team. It sits at the top of the team's season stats page and is rewritten after each locked match.
+Use only the facts given; never invent players, scores, streaks or numbers. Keep it friendly and never vulgar or offensive.
+Reply with one JSON object and nothing else: {"headline": string, "summary": string}
+- headline: at most 48 characters, no trailing period.
+- summary: 3 or 4 sentences, at most 480 characters: where the season stands, what changed with the latest match, who or what is driving it, and what's next.
+- Plain text only.`;
 let promptCache: { at: number; map: Record<string, string> } | null = null;
 async function prompts(url: string, service: string) {
   if (promptCache && Date.now() - promptCache.at < 300000) return promptCache.map;
@@ -133,6 +139,60 @@ async function recordVisit(req: Request, body: any, asUser: any, url: string, se
   return json({ ok: true });
 }
 
+// ---------- season progress summary: one per team and season, rewritten after each locked match ----------
+const MAX_SEASON_REWRITES = 10;   // per locked match, for team admins and members; owners and league admins have no limit
+async function writeSeason(body: any, uid: string, asUser: any, KEY: string, url: string, service: string) {
+  const teamId = String(body.teamId || ""), seasonId = String(body.seasonId || ""), force = !!body.force, facts = body.facts || {};
+  if (!/^[0-9a-f-]{36}$/i.test(teamId) || !/^[A-Za-z0-9_-]{1,64}$/.test(seasonId)) return json({ error: "Bad season." }, 400);
+  // row-level security decides what the caller can see; the latest lock must match what the app sent
+  const { data: rows, error: me } = await asUser.from("matches").select("id,sid:data->>seasonId,locked:data->>locked,lockedAt:data->>lockedAt").eq("team_id", teamId);
+  if (me) return json({ error: "Couldn't read the matches." }, 500);
+  const locked = (rows || []).filter((r: any) => r.sid === seasonId && r.locked === "true" && Number(r.lockedAt));
+  if (!locked.length) return json({ error: "Lock a match first." }, 409);
+  const asOf = Math.max(...locked.map((r: any) => Number(r.lockedAt)));
+  if (Number(facts.asOf) !== asOf || Number(facts.lockedMatches) !== locked.length) return json({ error: "The season changed. Reopen the Stats tab." }, 409);
+
+  const admin = createClient(url, service, { auth: { persistSession: false } });
+  const { data: prev } = await admin.from("season_summaries").select("*").eq("team_id", teamId).eq("season_id", seasonId).maybeSingle();
+  if (prev && Number(prev.as_of) >= asOf && !force) return json({ summary: prev });
+  const [{ data: who }, { data: tm }] = await Promise.all([
+    admin.from("admins").select("role,league_id").eq("user_id", uid).maybeSingle(),
+    admin.from("teams").select("league_id").eq("id", teamId).maybeSingle(),
+  ]);
+  const unlimited = who?.role === "owner" || (who?.role === "league" && who.league_id === tm?.league_id);
+  const same = prev && Number(prev.as_of) === asOf;
+  if (force && same && !unlimited && prev.gen_count >= MAX_SEASON_REWRITES) return json({ summary: prev, error: "This update has been rewritten as many times as it can be." }, 429);
+
+  // voice: rotate, avoiding the last few season updates and match reports
+  const { data: recent } = await admin.from("match_reports").select("data").eq("team_id", teamId).order("updated_at", { ascending: false }).limit(4);
+  const used = new Set([prev?.data?.voice, ...((prev?.history || []).slice(0, 3).map((h: any) => h?.data?.voice)), ...(recent || []).map((r: any) => r.data?.voice)].filter(Boolean));
+  const P = await prompts(url, service), VOICES = await voicesList(url, service);
+  const pool = VOICES.filter(v => !used.has(v.name));
+  const voice = (pool.length ? pool : VOICES)[Math.floor(Math.random() * (pool.length || VOICES.length))];
+  const system = (P.season_system || FALLBACK_SEASON) + (P.report_voice_note || FALLBACK_VOICE_NOTE).replaceAll("{name}", voice.name).replaceAll("{style}", voice.style);
+  const earlier = [prev?.data, ...(prev?.history || []).map((h: any) => h?.data)].filter((d: any) => d?.summary).slice(0, 3).map((d: any) => ({ headline: d.headline, summary: d.summary }));
+  const recentReports = (recent || []).filter((r: any) => r.data?.summary).map((r: any) => ({ headline: r.data.headline, summary: r.data.summary }));
+  const { asOf: _a, lockedMatches: _l, ...seasonFacts } = facts;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: MODEL, max_tokens: 2000, system,
+      messages: [{ role: "user", content: `Facts for the season update:\n${JSON.stringify({ ...seasonFacts, earlierUpdates: earlier, recentReports })}\n\nReply with the JSON object only.` }] }),
+  });
+  if (!res.ok) { const t = await res.text(); console.error("anthropic season", res.status, t.slice(0, 800)); let msg = t.slice(0, 200); try { msg = JSON.parse(t)?.error?.message || msg; } catch { /* plain */ } return json({ error: `Anthropic API ${res.status}: ${msg}` }, 502); }
+  const out = await res.json();
+  const txt = (out.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("").replace(/```(?:json)?/gi, "");
+  let ai: any; try { ai = JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1)); } catch { console.error("unparsed season", out.stop_reason, txt.slice(0, 1500)); return json({ error: `Claude's reply wasn't readable (stop: ${out.stop_reason}).` }, 502); }
+  const data = { headline: str(ai.headline, 60).replace(/[.!]+$/, ""), summary: str(ai.summary, 600), voice: voice.name, matches: locked.length, record: str(facts.record?.overall || facts.record?.season, 20) || undefined };
+  if (!data.summary) return json({ error: "Claude's reply was missing the summary." }, 502);
+  // keep the version being replaced, unless it's a rewrite of the same match
+  const history = same ? (prev.history || []) : prev?.data?.summary ? [{ as_of: prev.as_of, data: prev.data, at: prev.updated_at }, ...(prev.history || [])].slice(0, 40) : (prev?.history || []);
+  const rec = { team_id: teamId, season_id: seasonId, as_of: asOf, data, history, model: MODEL, gen_count: same ? (prev.gen_count || 0) + 1 : 1, updated_at: new Date().toISOString() };
+  const { error: we } = await admin.from("season_summaries").upsert(rec);
+  if (we) { console.error("save season", we); return json({ error: /season_summaries/.test(we.message || "") ? "The database is missing update 015." : "Couldn't save the season update." }, 500); }
+  return json({ summary: rec });
+}
+
 // ---------- league schedule reading (fallback for layouts the app can't parse itself) ----------
 
 
@@ -185,6 +245,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     if (body.action === "schedule") return await readSchedule(body, u.user.id, KEY, url, service);
+    if (body.action === "season") return await writeSeason(body, u.user.id, asUser, KEY, url, service);
     if (body.action === "visit") return await recordVisit(req, body, asUser, url, service);
     const matchId = String(body.matchId || ""), force = !!body.force, facts = body.facts || {};
     if (!/^[A-Za-z0-9_-]{4,64}$/.test(matchId)) return json({ error: "Bad match id." }, 400);
