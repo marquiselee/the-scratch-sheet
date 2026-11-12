@@ -13,6 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest?v=27">
 <meta name="apple-mobile-web-app-title" content="Scratch Sheet">
 <!-- Changelog
+  v75 2026-11-12: Season update: tells Claude the season stage (first match, early, mid, final stretch, playoffs, over) so early updates react to the start.
   v74 2026-11-12: Stats tab: Claude writes a 3–4 sentence season-so-far update after each locked match (one per lock, not per view), with earlier updates kept. Needs migration 015 and the updated match-report function.
   v73 2026-11-12: Site tab: Team usage panel ranks teams by how much they use the app and each feature (7/30/90 days), with leaders and feature mix. Needs migration 014.
   v72 2026-10-16: Phones: bottom tab bar fits six tabs and long admin emails wrap, so pages no longer overflow the screen width.
@@ -921,7 +922,7 @@ function deviceKind() {
 const logEvent = (type, team, meta) => { try { sb.rpc("log_event", { p_type: type, p_team: team || null, p_device: deviceId(), p_meta: meta || {} }).then(() => {}, () => {}); } catch (e) {} };
 
 /* ---------- Home Screen install + fresh versions ---------- */
-const APP_VERSION = "v74";   // bump with each release; open apps compare it with the live page and offer a reload
+const APP_VERSION = "v75";   // bump with each release; open apps compare it with the live page and offer a reload
 let installEvt = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; if (S.phase === "app") render(); });
 window.addEventListener("appinstalled", () => { logEvent("installed", S.teamId); installEvt = null; S.installed = true; if (S.phase === "app") render(); toast("Added to your Home Screen."); });
@@ -1531,6 +1532,8 @@ function seasonFacts(sid) {
   return {
     asOf: lk.asOf, lockedMatches: lk.n, team, league: S.league?.name || "", season: s?.name || "", city: (S.league?.city || "").trim() || undefined,
     matchesPlayed: ms.length,
+    // where in the season this lands; early updates react to the start rather than judge trends
+    stage: champs || elim ? "season over" : po.length ? "playoffs" : ms.length === 1 ? "after the first match" : ms.length <= 3 ? "early season" : upcoming.length && upcoming.filter(m => !m.playoff).length <= 2 ? "final stretch" : "mid-season",
     record: po.length ? { regularSeason: fmtRec(rec(reg)), playoffs: fmtRec(rec(po)), overall: fmtRec(rec(ms)) } : { season: fmtRec(rec(reg)) },
     gamesRecord: (() => { const t = gw(ms); return `${t.w}–${t.l}`; })(),
     streak: seq.length && streak >= 2 ? `${streak} straight ${seq[seq.length - 1] === "W" ? "wins" : seq[seq.length - 1] === "L" ? "losses" : "ties"}` : null,
